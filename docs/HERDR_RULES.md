@@ -133,7 +133,7 @@ Knowledge for a space lives under that repo’s **`docs/`** only (not a separate
 - Machine policy: [`policy/llm-wiki.toml`](../policy/llm-wiki.toml); pin in `.herdr/config.toml` `[wiki]`
 - Doctor / freshness: Go Herdr plugin [herdr-plugins/docs-wiki](https://github.com/tyler-jewell/herdr-plugins/tree/main/docs-wiki) — **not** git hooks  
   - hooks: `pane.agent_status_changed`, `workspace.focused`  
-  - CLI: `herdr-docs-wiki doctor|fix|nudge`
+  - CLI: `docs-wiki doctor|fix|nudge`
 
 ## Related
 

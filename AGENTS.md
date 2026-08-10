@@ -105,8 +105,8 @@ When finishing Rust/Go work, run the matching Herdr plugin (or CLI). **World-cla
 
 | Language | Plugin / CLI | What it enforces |
 |----------|----------------|------------------|
-| Rust | `herdr-code-gate-rust` (monorepo `code-gate-rust/`) | `fmt --check`, `clippy -D warnings` (+ all/pedantic), `cargo check`, ban `#[allow]` / cap-lints allow |
-| Go | `herdr-code-gate-go` (monorepo `code-gate-go/`) | `gofmt -l`, `go vet`, `staticcheck`, `go build`, ban `//nolint` / golangci disable configs |
+| Rust | `code-gate-rust` (`jewell.code-gate-rust`) | `fmt --check`, clippy zero-warning (pedantic on manual), `cargo check`, ban `#[allow]` / cap-lints allow |
+| Go | `code-gate-go` (`jewell.code-gate-go`) | `gofmt -l`, `go vet`, `staticcheck`, `go build`, ban `//nolint` / golangci disable configs |
 
 Plugin and house skill sources: **https://github.com/tyler-jewell/herdr-plugins** only.  
 This bootstrap repo has **no** `plugins/` or `skills/` trees.
@@ -181,5 +181,5 @@ Rules: lean, non-overlapping topics, **≤280 lines per page**, updated when wor
 3. Split or trim any page over 280 lines.
 
 Policy pin: `.herdr/config.toml` → `[wiki].policy_version` (machine policy in herdr-bootstrap `policy/llm-wiki.toml`).
-Doctor: Herdr action **Docs wiki doctor** or `herdr-docs-wiki doctor --current`.
+Doctor: Herdr action **Docs wiki doctor** or `docs-wiki doctor --current`.
 <!-- docs-wiki:end -->

@@ -2,7 +2,7 @@
 title: Docs wiki doctor
 updated: 2026-08-10
 tags: [runbook, doctor]
-summary: How to run and interpret herdr-docs-wiki doctor
+summary: How to run and interpret docs-wiki doctor
 ---
 
 # Docs wiki doctor
@@ -16,10 +16,10 @@ summary: How to run and interpret herdr-docs-wiki doctor
 
 ```bash
 # after build + PATH link
-herdr-docs-wiki doctor
-herdr-docs-wiki doctor --current
-herdr-docs-wiki doctor --json --strict
-herdr-docs-wiki fix --current --apply-policy
+docs-wiki doctor
+docs-wiki doctor --current
+docs-wiki doctor --json --strict
+docs-wiki fix --current --apply-policy
 ```
 
 ## Grades

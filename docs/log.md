@@ -8,3 +8,5 @@ YYYY-MM-DD | title | change
 2026-08-10 | lua lsp | Grok lsp.json + install.lua-language-server (parity with rust/go)
 2026-08-10 | plugins | Migrated docs-wiki + code-gates to tyler-jewell/herdr-plugins monorepo
 2026-08-10 | cleanup | Removed plugins/ and skills/ from bootstrap; monorepo-only
+
+2026-08-10 | plugins | jewell.* short names; drop maps/herdr-* aliases; agent-browser keys

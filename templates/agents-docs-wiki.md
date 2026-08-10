@@ -15,5 +15,5 @@ Rules: lean, non-overlapping topics, **≤280 lines per page**, updated when wor
 3. Split or trim any page over 280 lines.
 
 Policy pin: `.herdr/config.toml` → `[wiki].policy_version` (machine policy in herdr-bootstrap `policy/llm-wiki.toml`).
-Doctor: Herdr action **Docs wiki doctor** or `herdr-docs-wiki doctor --current`.
+Doctor: Herdr action **Docs wiki doctor** or `docs-wiki doctor --current`.
 <!-- docs-wiki:end -->

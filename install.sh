@@ -437,11 +437,8 @@ ensure_herdr_plugins_repo() {
   if ! command -v git >/dev/null 2>&1; then
     warn "git not on PATH; cannot pull herdr-plugins monorepo"
     if [ -d "$dest" ] && find "$dest" -maxdepth 2 -name herdr-plugin.toml 2>/dev/null | grep -q .; then
-      # use existing tree if any plugin manifests exist
-      if find "$dest" -maxdepth 2 -name herdr-plugin.toml 2>/dev/null | grep -q .; then
-        printf '%s\n' "$dest"
-        return 0
-      fi
+      printf '%s\n' "$dest"
+      return 0
     fi
     return 1
   fi
@@ -511,10 +508,6 @@ build_one_plugin() {
         if (cd "$plug" && go build -o "bin/$bin" "./cmd/$bin"); then
           ln -sfn "$plug/bin/$bin" "$LOCAL_BIN/$bin"
           built=1
-          # Convenience alias for docs-wiki
-          if [ "$bin" = "herdr-docs-wiki" ]; then
-            ln -sfn "$plug/bin/$bin" "$LOCAL_BIN/herdr-doctor"
-          fi
         else
           warn "go build failed: $name / $bin"
         fi
@@ -635,7 +628,7 @@ install_herdr_plugins() {
     link_skill_native_dirs
   fi
 
-  # Keybindings for docs-wiki / herdr-agent-browser live in config/herdr/config.toml (sync_herdr_config).
+  # Keybindings for jewell.docs-wiki / jewell.agent-browser live in config/herdr/config.toml (sync_herdr_config).
 }
 
 # Install agent skills from monorepo skills/<name>/SKILL.md → ~/.agents/skills/<name>
@@ -1288,10 +1281,10 @@ verify() {
   else
     printf '  MISS grok docs-wiki path\n'
   fi
-  if command -v herdr-docs-wiki >/dev/null 2>&1 || command -v herdr-doctor >/dev/null 2>&1; then
-    printf '  OK  herdr-docs-wiki CLI\n'
+  if command -v docs-wiki >/dev/null 2>&1; then
+    printf '  OK  docs-wiki CLI\n'
   else
-    printf '  MISS herdr-docs-wiki CLI (build plugin from clone)\n'
+    printf '  MISS docs-wiki CLI (build plugin from monorepo)\n'
   fi
   # LSP triad: must be present, runnable, and wired for Grok
   if rust_analyzer_ok; then
@@ -1355,10 +1348,10 @@ verify() {
     printf '  MISS ~/.config/herdr kitty_graphics (run bin/sync-herdr-config)\n'
   fi
   if [ -f "$HOME/.config/herdr/config.toml" ] && \
-     grep -q 'jewell.herdr-agent-browser' "$HOME/.config/herdr/config.toml" 2>/dev/null; then
-    printf '  OK  ~/.config/herdr/config.toml herdr-agent-browser keybindings\n'
+     grep -q 'jewell.agent-browser' "$HOME/.config/herdr/config.toml" 2>/dev/null; then
+    printf '  OK  ~/.config/herdr/config.toml agent-browser keybindings\n'
   else
-    printf '  MISS herdr-agent-browser keybindings in global config\n'
+    printf '  MISS agent-browser keybindings in global config\n'
   fi
   if [ "$SKIP_WEZTERM" = 1 ]; then
     printf '  SKIP wezterm (--skip-wezterm)\n'
@@ -1424,7 +1417,7 @@ Next steps:
   4. From WezTerm (not nested inside Herdr):  herdr
   5. Start your agent in a pane (e.g. grok)
   6. First-run walkthrough: https://herdr.dev/agent-guide.md
-  7. Project wiki: docs/ + skill docs-wiki; doctor: herdr-docs-wiki doctor
+  7. Project wiki: docs/ + skill docs-wiki; doctor: docs-wiki doctor
   8. Grok config source of truth: .grok/config.yaml → bin/sync-grok-config
   9. Herdr global config: config/herdr/config.toml → bin/sync-herdr-config
  10. WezTerm config: config/wezterm/wezterm.lua → bin/sync-wezterm-config

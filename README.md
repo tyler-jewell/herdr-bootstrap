@@ -171,9 +171,9 @@ Plugin **source of truth:** public monorepo [tyler-jewell/herdr-plugins](https:/
 | [`code-gate-rust`](https://github.com/tyler-jewell/herdr-plugins/tree/main/code-gate-rust) | `Cargo.toml` | `fmt --check`, `clippy -D warnings`, `cargo check` |
 | [`code-gate-go`](https://github.com/tyler-jewell/herdr-plugins/tree/main/code-gate-go) | `go.mod` | `gofmt`, `go vet`, `staticcheck`, `go build` |
 
-Hook: `pane.agent_status_changed` → run when agent is `done`/`idle` and the tree is **cheap** (size limits). CLI: `herdr-code-gate-rust|go check --current [--force]`.
+Hook: `pane.agent_status_changed` → run when agent is `done`/`idle` and the tree is **cheap** (size limits). CLI: `code-gate-rust|code-gate-go check --current [--force]`.
 
-`install.sh` **clones/pulls** [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), then builds and `herdr plugin link`s **every** plugin subdir (`docs-wiki`, `code-gate-go`, `code-gate-rust`, `maps`, …). Override with `HERDR_PLUGINS_ROOT` / `HERDR_PLUGINS_GIT_URL` / `HERDR_PLUGINS_REF`.
+`install.sh` **clones/pulls** [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), then builds and `herdr plugin link`s **every** plugin subdir (`docs-wiki`, `code-gate-go`, `code-gate-rust`, `agent-browser`, …). Plugin ids use `jewell.*` and short binary names (no `herdr-` prefix). Override with `HERDR_PLUGINS_ROOT` / `HERDR_PLUGINS_GIT_URL` / `HERDR_PLUGINS_REF`.
 
 ## Multi-project spaces (`herdr-discover`)
 
@@ -210,9 +210,9 @@ Each Herdr space’s **live knowledge** is a lean LLM wiki under that repo’s *
 | `AGENTS.md` markers | Routes agents to the wiki |
 
 ```bash
-herdr-docs-wiki doctor              # all .herdr projects
-herdr-docs-wiki doctor --current
-herdr-docs-wiki fix --current --apply-policy
+docs-wiki doctor              # all .herdr projects
+docs-wiki doctor --current
+docs-wiki fix --current --apply-policy
 # In Herdr: plugin actions or prefix+shift+d (after install)
 ```
 

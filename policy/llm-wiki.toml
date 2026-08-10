@@ -1,6 +1,6 @@
 # Machine policy for per-repo docs/* LLM wikis (herdr-bootstrap).
 # Bump policy_version when rules change; projects pin the version in .herdr/config.toml.
-# herdr-docs-wiki doctor reports drift; fix --apply-policy converges structure (not prose).
+# docs-wiki doctor (jewell.docs-wiki) reports drift; fix --apply-policy converges structure (not prose).
 
 policy_version = 1
 wiki_root = "docs"
