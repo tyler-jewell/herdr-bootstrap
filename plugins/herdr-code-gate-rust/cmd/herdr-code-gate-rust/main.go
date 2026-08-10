@@ -58,12 +58,16 @@ func cmdCheck(args []string) int {
 		}
 	}
 	_ = current
-	// Prefer process cwd for CLI; Herdr context only when no local cargo/go.mod
+	// Prefer process cwd; only use Herdr pane cwd when it actually has a Cargo.toml.
 	cwd, _ := os.Getwd()
-	if _, ok := proj.CargoRoot(cwd); !ok {
-		cwd = proj.ContextCwd()
-	}
 	root, ok := proj.CargoRoot(cwd)
+	if !ok && (os.Getenv("HERDR_ENV") == "1" || os.Getenv("HERDR_PLUGIN_CONTEXT_JSON") != "") {
+		if alt := proj.ContextCwd(); alt != "" {
+			if r2, ok2 := proj.CargoRoot(alt); ok2 {
+				root, ok, cwd = r2, true, alt
+			}
+		}
+	}
 	if !ok {
 		fmt.Println("[SKIP] no Cargo.toml above", cwd)
 		return 0

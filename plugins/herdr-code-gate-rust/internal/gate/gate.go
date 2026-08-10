@@ -210,7 +210,6 @@ func runCmd(dir string, timeout time.Duration, name string, args ...string) (str
 	cmd.Env = append(os.Environ(),
 		// force deny warnings at rustc level when possible
 		"RUSTFLAGS=-Dwarnings",
-		"CLIPPY_CONF_DIR=", // ignore accidental conf dir? empty may not clear — ok
 	)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

@@ -55,10 +55,14 @@ func cmdCheck(args []string) int {
 		}
 	}
 	cwd, _ := os.Getwd()
-	if _, ok := proj.GoModRoot(cwd); !ok {
-		cwd = proj.ContextCwd()
-	}
 	root, ok := proj.GoModRoot(cwd)
+	if !ok && (os.Getenv("HERDR_ENV") == "1" || os.Getenv("HERDR_PLUGIN_CONTEXT_JSON") != "") {
+		if alt := proj.ContextCwd(); alt != "" {
+			if r2, ok2 := proj.GoModRoot(alt); ok2 {
+				root, ok, cwd = r2, true, alt
+			}
+		}
+	}
 	if !ok {
 		fmt.Println("[SKIP] no go.mod above", cwd)
 		return 0
