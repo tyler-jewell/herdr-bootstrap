@@ -2,6 +2,18 @@
 
 **MUST use the Grok `lsp` tool for all Rust, Go, and Lua work** (`rust-analyzer` / `gopls` / `lua-language-server`). Prefer live source on this machine via LSP over docs or memory.
 
+## Human-approval mode (REQUIRED)
+
+This repo runs in **human-approval mode**:
+
+| Agent does | Agent does **not** |
+|------------|--------------------|
+| Open a **pull request into remote `main`** | Push commits directly to `main` / `origin/main` |
+| Wait for **human approve + merge** | Merge the PR, force-push protected branches, or deploy install as if merged |
+| Report the PR URL and stop at ready-for-review | Assume silent approval |
+
+After the human merges: remind them (or follow up if asked) to re-run `install.sh` / harness sync on **other machines**. Local experiments may use branches; **shipping path is always PR → human → main**.
+
 ## Dotfiles, not a transformer
 
 This repo is a **dotfiles-style machine layout**. The version-controlled tree is what we install: paths and filenames should match (or closely mirror) their live destinations so `install.sh` is mostly **copy / link / sync**, not invent.
@@ -9,7 +21,7 @@ This repo is a **dotfiles-style machine layout**. The version-controlled tree is
 | Repo path | Live destination (example) |
 |-----------|----------------------------|
 | `.grok/*` | `~/.grok/*` (plus project `.grok` when working here) |
-| `.grok/rules/`, `hooks/`, `agents/`, `personas/` | `~/.grok/rules|hooks|agents|personas/` (machine-wide harness) |
+| `.grok/rules/`, `hooks/`, `agents/`, `personas/` | `~/.grok/{rules,hooks,agents,personas}/` (machine-wide harness) |
 | `config/herdr/` | `~/.config/herdr/` |
 | `config/wezterm/` | `~/.config/wezterm/` |
 | `policy/` | pinned under `~/.config/herdr-bootstrap/` (or sibling lookup) |
@@ -17,11 +29,30 @@ This repo is a **dotfiles-style machine layout**. The version-controlled tree is
 
 **Requirement for agents:** Prefer adding or editing files in the shape they will have on disk. Do **not** invent alternate layouts, intermediate formats, or rename-on-install schemes — every mismatch forces more setup code. Thin sync scripts and `install.sh` phases are fine; structural translation is not. Plugins/skills live only in [herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), not here.
 
-**Harness surfaces:** put policy in the native Grok slot (rules / hooks / agents / personas / skills / config) even if only one consumer. CAPS `NEVER`/`ALWAYS`/`MUST` may open the **rules steward** (right Herdr pane) via `rules-steward` + `.grok/hooks/policy-caps.json`.
-
 This repository **orchestrates** a greenfield install of Herdr, WezTerm (outer terminal), Node/npx, Grok, agent skills, and integrations. It is **not** the Herdr source tree and **not** the plugin monorepo.
 
 **Plugins live in** [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins). `install.sh` clones/pulls that repo and installs **all** plugins (every `*/herdr-plugin.toml`).
+
+## Harness policy (Grok `.grok/`) — session learnings
+
+**Source of truth:** versioned **herdr-bootstrap `.grok/`**. **Home `~/.grok/` is the sync target only** (`install.sh` → `sync_grok_harness_surfaces`). Never invent a side store (e.g. `config/grok/rules/`).
+
+| Surface | Versioned path | Notes |
+|---------|----------------|--------|
+| rules | `.grok/rules/*.md` | Standing MUST/NEVER; bar in `agent-rule-quality.md` |
+| hooks | `.grok/hooks/` | Team hooks only (e.g. `policy-caps.json`) |
+| agents | `.grok/agents/` | e.g. `rules-steward.md` |
+| personas | `.grok/personas/` | e.g. surface-analyst |
+| skills | monorepo / `~/.agents/skills` | not a bootstrap side tree |
+| config | `.grok/config.yaml`, `lsp.json` | `bin/sync-grok-config` → live toml |
+
+**Home→VC pull:** prefer `rules-steward migrate --dry-run` then `rules-steward migrate` (never copy Herdr-managed files into git).
+
+**NEVER version Herdr integration hooks:** `herdr.json`, `herdr-agent-state.sh` (written by `herdr integration install`; stay home-only).
+
+**CAPS:** whole-word `NEVER`/`ALWAYS`/`MUST`/… may open the **rules steward** (right Herdr pane) via plugin + `.grok/hooks/policy-caps.json`. Steward lands policy under native harness surfaces; quality bar: `.grok/rules/agent-rule-quality.md`.
+
+**Language quality:** policy in `.grok/rules/` (e.g. `language-lsp.md`); equip LSPs with **`jewell.go-lang` / `jewell.rust-lang` / `jewell.lua-lang`**. Do **not** reintroduce code-gate format/lint hooks.
 
 ## Canonical development URLs
 
@@ -137,6 +168,10 @@ This bootstrap repo has **no** `plugins/` trees (skills may still be installed f
 6. Eve/PromptScript may fail global skill install; treat as noise if canonical skill exists.
 7. `herdr integration install grok` needs `~/.grok` already present (install Grok first).
 8. First human attach: run `herdr` from a **normal** terminal, start the agent in a pane, then use the skill inside Herdr.
+9. **Harness SoT is repo `.grok/`**, not `~/` — home-only edits drift every machine; use migrate + PR.
+10. **Never git `herdr.json` / `herdr-agent-state.sh`** — integration-owned; rsync without `--delete` so sync does not erase them.
+11. **No side stores** for machine rules (`config/grok/…` was a false path); native harness only.
+12. **Human-approval mode:** ship via PR to remote `main`; do not treat local main commits as published.
 
 ## WezTerm (Herdr + agent outer terminal)
 

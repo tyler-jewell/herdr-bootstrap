@@ -14,4 +14,5 @@ YYYY-MM-DD | title | change
 
 2026-08-10 | lang plugins | code-gates → go/rust/lua-lang (LSP equip); quality via rules steward
 2026-08-10 | agent-rules | CAPS NEVER: no machine rules only in ~/; consolidated into .grok/rules/agent-rule-quality.md
+2026-08-10 | agent-rules | MUST migrate harness into .grok VC; NEVER version Herdr hooks; bootstrap SoT
 2026-08-10 | wezterm | Requirement: Herdr + agent work uses WezTerm; install registers that path (user-local)
