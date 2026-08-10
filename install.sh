@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
 # Herdr machine bootstrap — idempotent install/update of herdr, Node/npx, Grok,
 # agent skills (herdr, llm-wiki pattern, docs-wiki), agent-native skill symlinks
-# (#1874 / PR #1883), Grok integration hooks, and the herdr-docs-wiki Go plugin.
+# (#1874 / PR #1883), Grok integration hooks, global Herdr config sync, and plugins.
 #
 # Usage:
-#   sh install.sh [--skip-node] [--skip-grok] [--skip-skills] [--skip-integrations] [--skip-plugin] [--dry-run]
+#   sh install.sh [--skip-node] [--skip-grok] [--skip-skills] [--skip-integrations] [--skip-plugin] [--skip-herdr-config-sync] [--dry-run]
 #   # or: curl -fsSL <raw-url-of-this-repo>/install.sh | sh
 #
 # Safety:
@@ -24,6 +24,7 @@ SKIP_PLUGIN=0
 SKIP_RUST_ANALYZER=0
 SKIP_GOPLS=0
 SKIP_GROK_CONFIG_SYNC=0
+SKIP_HERDR_CONFIG_SYNC=0
 DRY_RUN=0
 
 NODE_VERSION="${NODE_VERSION:-22.18.0}"
@@ -50,6 +51,7 @@ for arg in "$@"; do
     --skip-rust-analyzer) SKIP_RUST_ANALYZER=1 ;;
     --skip-gopls) SKIP_GOPLS=1 ;;
     --skip-grok-config-sync) SKIP_GROK_CONFIG_SYNC=1 ;;
+    --skip-herdr-config-sync) SKIP_HERDR_CONFIG_SYNC=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
       sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
@@ -450,27 +452,42 @@ install_docs_wiki_plugin() {
     herdr plugin link "$plug" --yes 2>/dev/null || \
     warn "herdr plugin link failed (is server compatible? try: herdr plugin link $plug)"
 
-  # optional keybinding once
-  cfg="$HOME/.config/herdr/config.toml"
-  mkdir -p "$(dirname "$cfg")"
-  touch "$cfg"
-  marker="# >>> herdr-bootstrap docs-wiki key >>>"
-  if ! grep -F "$marker" "$cfg" >/dev/null 2>&1; then
-    log "appending docs-wiki doctor keybinding to $cfg"
-    cat >>"$cfg" <<'KEYEOF'
-
-# >>> herdr-bootstrap docs-wiki key >>>
-[[keys.command]]
-key = "prefix+shift+d"
-type = "plugin_action"
-command = "herdr.docs-wiki.doctor-current"
-description = "docs wiki doctor (current space)"
-# <<< herdr-bootstrap docs-wiki key <<<
-KEYEOF
-    herdr server reload-config 2>/dev/null || true
-  fi
-
+  # Keybindings for docs-wiki (and maps, kitty, …) live in versioned
+  # config/herdr/config.toml and are applied by sync_herdr_config.
   install_code_gate_plugins
+  try_link_maps_plugin
+}
+
+# Link jewell.maps from sibling herdr-plugins monorepo when present.
+try_link_maps_plugin() {
+  if [ "$SKIP_PLUGIN" = 1 ]; then
+    return 0
+  fi
+  if ! command -v herdr >/dev/null 2>&1; then
+    return 0
+  fi
+  maps=""
+  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/../herdr-plugins/maps/herdr-plugin.toml" ]; then
+    maps="$(CDPATH= cd -- "$BOOTSTRAP_ROOT/../herdr-plugins/maps" && pwd)"
+  elif [ -f "$HOME/herdr-plugins/maps/herdr-plugin.toml" ]; then
+    maps="$HOME/herdr-plugins/maps"
+  fi
+  if [ -z "$maps" ]; then
+    return 0
+  fi
+  log "linking maps plugin from $maps"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would: herdr plugin link $maps"
+    return 0
+  fi
+  if [ -x "$maps/target/release/map-axi" ] || command -v cargo >/dev/null 2>&1; then
+    if [ ! -x "$maps/target/release/map-axi" ] && command -v cargo >/dev/null 2>&1; then
+      (cd "$maps" && cargo build --release) || warn "maps cargo build failed"
+    fi
+  fi
+  herdr plugin link "$maps" 2>/dev/null || \
+    herdr plugin link "$maps" --yes 2>/dev/null || \
+    warn "herdr plugin link maps failed"
 }
 
 # --- Per-language code gates (Rust / Go) ---
@@ -638,6 +655,30 @@ sync_grok_config() {
   fi
 }
 
+# --- Sync versioned global Herdr config → ~/.config/herdr/config.toml ---
+
+sync_herdr_config() {
+  if [ "$SKIP_HERDR_CONFIG_SYNC" = 1 ]; then
+    log "skip herdr global config sync (--skip-herdr-config-sync)"
+    return 0
+  fi
+  if [ -z "$BOOTSTRAP_ROOT" ] || [ ! -f "$BOOTSTRAP_ROOT/config/herdr/config.toml" ]; then
+    warn "no config/herdr/config.toml (run install from herdr-bootstrap clone)"
+    return 0
+  fi
+  sync_bin="$BOOTSTRAP_ROOT/bin/sync-herdr-config"
+  if [ ! -f "$sync_bin" ]; then
+    warn "missing bin/sync-herdr-config"
+    return 0
+  fi
+  log "syncing config/herdr/config.toml → ~/.config/herdr/config.toml (all agents)"
+  if [ "$DRY_RUN" = 1 ]; then
+    python3 "$sync_bin" --dry-run || warn "sync-herdr-config dry-run failed"
+    return 0
+  fi
+  python3 "$sync_bin" || warn "sync-herdr-config failed"
+}
+
 # --- Integrations ---
 
 install_integrations() {
@@ -748,6 +789,24 @@ verify() {
   if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/.grok/config.yaml" ]; then
     printf '  OK  project .grok/config.yaml (source of truth)\n'
   fi
+  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/config/herdr/config.toml" ]; then
+    printf '  OK  project config/herdr/config.toml (Herdr global source of truth)\n'
+  else
+    printf '  MISS project config/herdr/config.toml\n'
+    ok=0
+  fi
+  if [ -f "$HOME/.config/herdr/config.toml" ] && \
+     grep -q 'kitty_graphics\s*=\s*true' "$HOME/.config/herdr/config.toml" 2>/dev/null; then
+    printf '  OK  ~/.config/herdr/config.toml kitty_graphics=true\n'
+  else
+    printf '  MISS ~/.config/herdr kitty_graphics (run bin/sync-herdr-config)\n'
+  fi
+  if [ -f "$HOME/.config/herdr/config.toml" ] && \
+     grep -q 'jewell.maps' "$HOME/.config/herdr/config.toml" 2>/dev/null; then
+    printf '  OK  ~/.config/herdr/config.toml maps keybindings\n'
+  else
+    printf '  MISS herdr maps keybindings in global config\n'
+  fi
 
   if command -v herdr >/dev/null 2>&1; then
     herdr --version 2>/dev/null | sed 's/^/  /' || true
@@ -772,6 +831,7 @@ install_docs_wiki_plugin
 install_rust_analyzer
 install_gopls
 sync_grok_config
+sync_herdr_config
 install_integrations
 verify
 
@@ -787,7 +847,8 @@ Next steps:
   5. First-run walkthrough: https://herdr.dev/agent-guide.md
   6. Project wiki: docs/ + skill docs-wiki; doctor: herdr-docs-wiki doctor
   7. Grok config source of truth: .grok/config.yaml → bin/sync-grok-config
-  8. LSP: .grok/lsp.json (rust-analyzer + gopls) + lsp_tools in ~/.grok/config.toml
+  8. Herdr global config source of truth: config/herdr/config.toml → bin/sync-herdr-config
+  9. LSP: .grok/lsp.json (rust-analyzer + gopls) + lsp_tools in ~/.grok/config.toml
 
 Docs: https://herdr.dev/docs/  |  Plugins: https://herdr.dev/plugins/  |  Blog: https://herdr.dev/blog/
 Source: https://github.com/herdrdev/herdr

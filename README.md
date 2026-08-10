@@ -111,6 +111,25 @@ grep lsp_tools ~/.grok/config.toml   # true after sync
 
 Details: [`.grok/README.md`](./.grok/README.md).
 
+## Herdr global config (version-controlled, all agents)
+
+**Source of truth:** [`config/herdr/config.toml`](./config/herdr/config.toml).
+
+Synced to `~/.config/herdr/config.toml` so **every agent and Herdr session** on the machine gets the same UI, experimental flags (e.g. `kitty_graphics` for map previews), and plugin keybindings.
+
+| File | Role |
+|------|------|
+| `config/herdr/config.toml` | Team Herdr global settings |
+| `bin/sync-herdr-config` | Installs to `~/.config/herdr/config.toml` + `herdr server reload-config` |
+
+```bash
+bin/sync-herdr-config
+# or full bootstrap:
+sh install.sh
+```
+
+Includes: agent labels on pane borders, quiet toasts, **Kitty graphics**, maps open/preview keys (`prefix+shift+m` / `prefix+shift+p`), docs-wiki doctor key. See [docs/HERDR_RULES.md](./docs/HERDR_RULES.md).
+
 ## Code gates (one plugin per language)
 
 Strict format/lint/build after agent work (or on demand). **No warnings; no local lint suppressions/overrides.**

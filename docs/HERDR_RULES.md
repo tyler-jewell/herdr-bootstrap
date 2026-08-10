@@ -8,11 +8,13 @@ Canonical Herdr docs: [herdr.dev/docs](https://herdr.dev/docs/). Concepts: [work
 
 | Layer | Path | Role |
 |-------|------|------|
-| **Global** | `~/.config/herdr/config.toml` | Keys, theme, toasts, sidebar, plugins — machine prefs |
+| **Global (team)** | **Source:** `herdr-bootstrap/config/herdr/config.toml` → **Live:** `~/.config/herdr/config.toml` via `bin/sync-herdr-config` | Keys, theme, toasts, experimental (e.g. Kitty graphics), shared plugin actions — **same for every agent** |
 | **Project** | `<repo>/.herdr/config.toml` | Opt-in marker + space layout + `agent_kind` — **version-controlled with the repo** |
 | **Session** | Herdr server snapshot | Live open shape; restored after restart (local, not project VCS) |
 
 `HERDR_CONFIG_PATH` only overrides the **global** config path. It does not select per-project files.
+
+Edit the **bootstrap** global file, then `bin/sync-herdr-config` (or `install.sh`). Do not rely on hand-editing `~/.config/herdr/config.toml` alone — it will be overwritten on the next sync.
 
 ## Opt-in discovery
 

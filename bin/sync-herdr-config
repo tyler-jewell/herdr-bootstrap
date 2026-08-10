@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Sync herdr-bootstrap config/herdr/config.toml → ~/.config/herdr/config.toml.
+
+Source of truth is the repo file. Live Herdr global config is replaced so every
+agent/session on the machine gets the same UI, experimental (e.g. kitty_graphics),
+and managed plugin keybindings.
+
+Usage:
+  bin/sync-herdr-config [--dry-run] [--no-reload]
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SRC = REPO / "config" / "herdr" / "config.toml"
+HERDR_CONFIG_HOME = Path(
+    os.environ.get("HERDR_CONFIG_PATH")
+    or (Path.home() / ".config" / "herdr" / "config.toml")
+)
+# If HERDR_CONFIG_PATH points at a file, use it; if unset, standard path.
+if os.environ.get("HERDR_CONFIG_PATH"):
+    DST = Path(os.environ["HERDR_CONFIG_PATH"])
+else:
+    DST = Path.home() / ".config" / "herdr" / "config.toml"
+
+
+def die(msg: str) -> None:
+    print(f"XX  {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main() -> int:
+    dry = "--dry-run" in sys.argv
+    no_reload = "--no-reload" in sys.argv
+
+    if not SRC.is_file():
+        die(f"missing source of truth: {SRC}")
+
+    body = SRC.read_text(encoding="utf-8")
+    if "[experimental]" not in body or "kitty_graphics" not in body:
+        die("source config missing required [experimental] kitty_graphics block")
+
+    print(f"==> source  {SRC}")
+    print(f"==> write   {DST}")
+
+    if dry:
+        print("--- preview (first 40 lines) ---")
+        for i, line in enumerate(body.splitlines()[:40], 1):
+            print(f"{i:3}| {line}")
+        print("...")
+        return 0
+
+    DST.parent.mkdir(parents=True, exist_ok=True)
+    if DST.is_file():
+        bak = DST.with_suffix(".toml.pre-herdr-bootstrap")
+        if not bak.exists():
+            shutil.copy2(DST, bak)
+            print(f"==> backup  {bak}")
+        # also timestamped backup of last live file
+        stamped = DST.with_suffix(".toml.bak-last")
+        shutil.copy2(DST, stamped)
+
+    header = (
+        "# GENERATED/MANAGED by herdr-bootstrap bin/sync-herdr-config\n"
+        f"# Source of truth: {SRC}\n"
+        "# Re-run: bin/sync-herdr-config   (or: sh install.sh)\n"
+        "#\n"
+    )
+    # Avoid double headers if source already documents itself
+    if body.lstrip().startswith("# Herdr GLOBAL"):
+        DST.write_text(header + body, encoding="utf-8")
+    else:
+        DST.write_text(header + body, encoding="utf-8")
+
+    print("OK  global Herdr config installed for all agents/sessions")
+
+    if not no_reload:
+        herdr = shutil.which("herdr")
+        if herdr:
+            r = subprocess.run(
+                [herdr, "server", "reload-config"],
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode == 0:
+                print("OK  herdr server reload-config")
+            else:
+                # Server may not be running — still fine; next attach reads file.
+                print("!!  herdr server reload-config skipped/failed (will apply on next start)")
+        else:
+            print("!!  herdr not on PATH; config written for next launch")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,64 @@
+# Herdr GLOBAL config — source of truth in herdr-bootstrap.
+# Synced to ~/.config/herdr/config.toml by: bin/sync-herdr-config (install.sh).
+# Do not hand-edit the live home copy for team settings; edit this file and re-sync.
+#
+# Docs: https://herdr.dev/docs/configuration/
+# Reference: https://herdr.dev/docs/config-reference/
+
+onboarding = false
+
+[theme]
+name = "catppuccin"
+
+[ui]
+# Agents visible on pane borders for multi-agent tabs (maps + sibling agents, etc.)
+show_agent_labels_on_pane_borders = true
+pane_borders = true
+confirm_close = true
+
+[ui.toast]
+# Quiet default for shared agent machines; set delivery = "herdr" for in-app toasts.
+delivery = "off"
+delay_seconds = 1
+
+[ui.sound]
+enabled = true
+
+[session]
+# Resume supported agent panes after Herdr server restart (needs integrations).
+resume_agents_on_restore = true
+
+[update]
+channel = "stable"
+version_check = true
+manifest_check = true
+
+# --- Experimental (shared intentionally) ---
+# Kitty graphics: terminal image protocol for map-axi preview / image panes.
+# Requires a Kitty-graphics-capable outer terminal (Kitty, Ghostty, WezTerm, …).
+# Harmless when unsupported; map-axi still falls back to system open + path.
+[experimental]
+kitty_graphics = true
+allow_nested = false
+pane_history = false
+
+# --- Managed keybindings (plugin actions) ---
+# Maps: open free satellite map UI (jewell.maps — link from herdr-plugins monorepo).
+[[keys.command]]
+key = "prefix+shift+m"
+type = "plugin_action"
+command = "jewell.maps.open"
+description = "open satellite maps (jewell.maps)"
+
+[[keys.command]]
+key = "prefix+shift+p"
+type = "plugin_action"
+command = "jewell.maps.preview"
+description = "maps preview (headless capture)"
+
+# Docs wiki doctor for current Herdr space
+[[keys.command]]
+key = "prefix+shift+d"
+type = "plugin_action"
+command = "herdr.docs-wiki.doctor-current"
+description = "docs wiki doctor (current space)"

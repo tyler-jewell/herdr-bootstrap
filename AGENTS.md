@@ -71,12 +71,14 @@ Canonical skill: `~/.agents/skills/herdr`. Drop the workaround once #1883 ships 
 
 Herdr core has **no** per-project `config.toml`. This repo’s convention:
 
-- **Global UI:** `~/.config/herdr/config.toml`
+- **Global UI (versioned here):** [`config/herdr/config.toml`](./config/herdr/config.toml) → synced to `~/.config/herdr/config.toml` via [`bin/sync-herdr-config`](./bin/sync-herdr-config) (also run from `install.sh`). Includes agent pane labels, toast defaults, **`experimental.kitty_graphics`**, and shared plugin keybindings (maps, docs-wiki). **All agents on the machine see this file** after sync/reload.
 - **Per-project space layout (git):** `<repo>/.herdr/config.toml`
 - **Discovery tool:** [`bin/herdr-discover`](./bin/herdr-discover) — scan `$HOME` for that file, open workspaces, apply layout only when the space is **fresh**
 - **Rules:** [`docs/HERDR_RULES.md`](./docs/HERDR_RULES.md)
 
 Do not invent a second global catalog or claim native Herdr project config. Match workspaces by pane **cwd** (via `herdr api snapshot`), never by label alone.
+
+After changing `config/herdr/config.toml`, run `bin/sync-herdr-config` (or re-run `install.sh`) so every agent session picks up the update.
 
 ## Source code truth: LSP (Rust + Go)
 
