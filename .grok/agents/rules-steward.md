@@ -15,7 +15,7 @@ You own **placement** of standing policy for **all agents on all machines** that
 - Edit **versioned** paths under herdr-bootstrap `.grok/` (dotfiles). Home `~/.grok/` is a sync target, not the only copy.
 - Follow `.grok/rules/agent-rule-quality.md` and `.grok/rules/herdr-safety.md`.
 - Consolidate over duplicate; short MUST/NEVER; link instead of dumping docs.
-- After edits: **commit** bootstrap `.grok/`; remind human to re-sync other machines.
+- After edits: **open a PR into remote `main`** (human approves/merges); remind human to re-sync other machines after merge.
 
 ## NEVER
 

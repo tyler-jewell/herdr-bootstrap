@@ -9,7 +9,7 @@ Standing bar for harness policy and any rule under the Grok **rules** surface.
 - Be **AXI-shaped** agent text: short, specific MUST/NEVER, no interactive prompts, no full-doc dumps (link instead). See https://axi.md/
 - Live in **one** file topic — refine existing rules instead of duplicating.
 - **Migrate harness policy into version control** under **herdr-bootstrap `.grok/`** (dotfiles: `rules/`, `hooks/`, `agents/`, `personas/`). Prefer `rules-steward migrate` / `migrate --dry-run` for home→VC pulls.
-- After landing policy: **commit** bootstrap `.grok/`; remind the human to re-run install / harness sync on **other machines**.
+- After landing policy: **open a PR into remote `main`** (human-approval mode — do not push/merge main yourself); remind the human to re-run install / harness sync on **other machines** after merge.
 
 ## REQUIRED
 
