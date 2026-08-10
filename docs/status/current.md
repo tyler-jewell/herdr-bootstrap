@@ -7,7 +7,7 @@ summary: Live view of herdr-bootstrap purpose and tooling
 
 # Current status
 
-**herdr-bootstrap** orchestrates a greenfield Herdr machine setup: Herdr, **WezTerm** (outer terminal), Node/npx, Grok, skills, integrations — not the Herdr app source.
+**herdr-bootstrap** orchestrates a greenfield Herdr machine setup: Herdr, **WezTerm** (required outer terminal + default registration), Node/npx, Grok, skills, integrations — not the Herdr app source.
 
 ## Live tools
 
