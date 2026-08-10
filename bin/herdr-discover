@@ -1,0 +1,801 @@
+#!/usr/bin/env python3
+"""Discover .herdr/config.toml projects under $HOME and open them as Herdr spaces.
+
+Convention (not core Herdr): project-local version-controlled space config.
+See docs/HERDR_RULES.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+TEMPLATES_DIR = REPO_ROOT / "examples" / "herdr-config"
+
+DEFAULT_DEPTH = 6
+PRUNE_NAMES = frozenset(
+    {
+        "Library",
+        "Movies",
+        "Music",
+        "Pictures",
+        "Public",
+        "Applications",
+        ".Trash",
+        "node_modules",
+        ".git",
+        "target",
+        "dist",
+        "build",
+        ".cache",
+        ".npm",
+        ".cargo",
+        ".rustup",
+        ".nvm",
+        ".pyenv",
+        ".local",
+        ".config",  # skip most of XDG; projects rarely nest under here as spaces
+        ".orbstack",
+        ".docker",
+        ".vscode",
+        ".cursor",
+        ".codex",
+        ".claude",
+        ".grok",  # agent home, not a product project
+        "venv",
+        ".venv",
+        "__pycache__",
+        "DerivedData",
+        "Pods",
+    }
+)
+
+AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+
+# ---------------------------------------------------------------------------
+# Minimal TOML subset parser (Python 3.9 has no tomllib)
+# Supports: strings, bools, ints; top-level keys; [[tabs]] and [[tabs.panes]]
+# ---------------------------------------------------------------------------
+
+
+def _parse_toml_value(raw: str) -> Any:
+    s = raw.strip()
+    if not s:
+        return ""
+    if s.startswith("#"):
+        return None
+    # strip inline comment (naive: not inside quotes)
+    if " #" in s:
+        s = s.split(" #", 1)[0].rstrip()
+    if s in ("true", "false"):
+        return s == "true"
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        return s[1:-1]
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return s
+
+
+def parse_herdr_config(text: str) -> Dict[str, Any]:
+    """Parse our project config subset into a dict."""
+    data: Dict[str, Any] = {
+        "name": None,
+        "enabled": True,
+        "agent_kind": None,
+        "priority": 100,
+        "tabs": [],
+    }
+    current_tab: Optional[Dict[str, Any]] = None
+    section = "root"  # root | tab | pane
+
+    for lineno, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if stripped == "[[tabs]]":
+            current_tab = {"name": None, "panes": []}
+            data["tabs"].append(current_tab)
+            section = "tab"
+            continue
+        if stripped == "[[tabs.panes]]":
+            if current_tab is None:
+                raise ValueError(f"line {lineno}: [[tabs.panes]] without [[tabs]]")
+            pane: Dict[str, Any] = {
+                "name": None,
+                "agent": False,
+                "agent_name": None,
+                "agent_kind": None,
+                "command": None,
+                "split": None,
+            }
+            current_tab["panes"].append(pane)
+            section = "pane"
+            continue
+        if stripped.startswith("[["):
+            raise ValueError(f"line {lineno}: unsupported table {stripped!r}")
+        # Single tables like [wiki] — skip keys until next known section
+        if stripped.startswith("[") and stripped.endswith("]") and not stripped.startswith("[["):
+            section = "other"
+            continue
+
+        if "=" not in stripped:
+            raise ValueError(f"line {lineno}: expected key = value, got {stripped!r}")
+
+        key, _, rest = stripped.partition("=")
+        key = key.strip()
+        val = _parse_toml_value(rest)
+        if val is None:
+            continue
+
+        if section == "root":
+            if key in ("name", "agent_kind"):
+                data[key] = val
+            elif key == "enabled":
+                data["enabled"] = bool(val)
+            elif key == "priority":
+                data["priority"] = int(val)
+            # ignore unknown top-level keys
+        elif section == "tab":
+            assert current_tab is not None
+            if key == "name":
+                current_tab["name"] = val
+        elif section == "pane":
+            pane = current_tab["panes"][-1]  # type: ignore[index]
+            if key in ("name", "agent_name", "agent_kind", "command", "split"):
+                pane[key] = val
+            elif key == "agent":
+                pane["agent"] = bool(val)
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Project model + discovery
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Project:
+    root: str
+    config_path: str
+    name: str
+    enabled: bool
+    agent_kind: Optional[str]
+    priority: int
+    tabs: List[Dict[str, Any]] = field(default_factory=list)
+
+    def has_layout(self) -> bool:
+        return bool(self.tabs)
+
+
+def canonical(path: str) -> str:
+    return os.path.realpath(os.path.expanduser(path))
+
+
+def load_project(config_path: Path) -> Project:
+    root = canonical(str(config_path.parent.parent))
+    text = config_path.read_text(encoding="utf-8")
+    data = parse_herdr_config(text)
+    name = data.get("name") or Path(root).name
+    return Project(
+        root=root,
+        config_path=str(config_path.resolve()),
+        name=str(name),
+        enabled=bool(data.get("enabled", True)),
+        agent_kind=data.get("agent_kind") or None,
+        priority=int(data.get("priority", 100)),
+        tabs=list(data.get("tabs") or []),
+    )
+
+
+def discover(root: str, max_depth: int) -> List[Project]:
+    root = canonical(root)
+    found: List[Project] = []
+    root_depth = root.rstrip(os.sep).count(os.sep)
+
+    for dirpath, dirnames, _filenames in os.walk(root, topdown=True, followlinks=False):
+        depth = dirpath.rstrip(os.sep).count(os.sep) - root_depth
+        # Marker: <project>/.herdr/config.toml — project root is dirpath when .herdr is a child
+        if ".herdr" in dirnames:
+            cfg = Path(dirpath) / ".herdr" / "config.toml"
+            if cfg.is_file():
+                try:
+                    found.append(load_project(cfg))
+                except Exception as exc:  # noqa: BLE001 — report and continue
+                    print(f"!!  skip {cfg}: {exc}", file=sys.stderr)
+            # do not walk into .herdr
+            dirnames.remove(".herdr")
+
+        if depth >= max_depth:
+            dirnames[:] = []
+            continue
+
+        pruned = []
+        for d in dirnames:
+            if d in PRUNE_NAMES:
+                continue
+            if d.startswith(".") and d not in (".herdr",):
+                continue
+            pruned.append(d)
+        dirnames[:] = pruned
+
+    # de-dupe by root
+    by_root: Dict[str, Project] = {}
+    for p in found:
+        by_root[p.root] = p
+    return sorted(by_root.values(), key=lambda p: (p.priority, p.name.lower(), p.root))
+
+
+# ---------------------------------------------------------------------------
+# Herdr CLI helpers
+# ---------------------------------------------------------------------------
+
+
+class HerdrError(RuntimeError):
+    pass
+
+
+def herdr_bin() -> str:
+    return os.environ.get("HERDR_BIN_PATH") or shutil.which("herdr") or "herdr"
+
+
+def herdr_run(*args: str, check: bool = True) -> Dict[str, Any]:
+    cmd = [herdr_bin(), *args]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise HerdrError(f"herdr {' '.join(args)} failed ({proc.returncode}): {err}")
+    out = (proc.stdout or "").strip()
+    if not out:
+        return {}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise HerdrError(f"herdr {' '.join(args)} returned non-JSON: {out[:200]}") from exc
+
+
+def snapshot() -> Dict[str, Any]:
+    data = herdr_run("api", "snapshot")
+    result = data.get("result") or data
+    snap = result.get("snapshot") or result
+    if "workspaces" not in snap:
+        raise HerdrError("api snapshot missing workspaces")
+    return snap
+
+
+def map_workspaces(snap: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """workspace_id -> {meta, pane_cwds, panes, fresh}"""
+    ws_by_id: Dict[str, Dict[str, Any]] = {}
+    for w in snap.get("workspaces") or []:
+        wid = w["workspace_id"]
+        ws_by_id[wid] = {
+            "meta": w,
+            "pane_cwds": set(),
+            "panes": [],
+            "fresh": False,
+        }
+    for p in snap.get("panes") or []:
+        wid = p.get("workspace_id")
+        if wid not in ws_by_id:
+            continue
+        cwd = p.get("cwd")
+        if cwd:
+            ws_by_id[wid]["pane_cwds"].add(canonical(cwd))
+        ws_by_id[wid]["panes"].append(p)
+
+    for wid, info in ws_by_id.items():
+        m = info["meta"]
+        panes = info["panes"]
+        single = int(m.get("tab_count") or 0) == 1 and int(m.get("pane_count") or 0) == 1
+        no_agent = True
+        if panes:
+            # fresh only if the sole pane has no recognized agent
+            no_agent = not any(p.get("agent") for p in panes)
+        elif int(m.get("pane_count") or 0) == 1:
+            no_agent = True
+        info["fresh"] = bool(single and no_agent)
+    return ws_by_id
+
+
+def covering_workspace(
+    project_root: str, ws_map: Dict[str, Dict[str, Any]]
+) -> Optional[Tuple[str, Dict[str, Any]]]:
+    root = canonical(project_root)
+    matches: List[Tuple[str, Dict[str, Any]]] = []
+    for wid, info in ws_map.items():
+        if root in info["pane_cwds"]:
+            matches.append((wid, info))
+    if not matches:
+        return None
+    # Prefer a fresh empty one if duplicates exist, else first by number
+    matches.sort(
+        key=lambda item: (
+            0 if item[1]["fresh"] else 1,
+            int(item[1]["meta"].get("number") or 999),
+        )
+    )
+    return matches[0]
+
+
+def sanitize_agent_name(name: str, fallback: str = "agent") -> str:
+    s = re.sub(r"[^a-z0-9_-]", "-", name.lower())
+    s = re.sub(r"-+", "-", s).strip("-")
+    if not s:
+        s = fallback
+    if not s[0].isalpha():
+        s = "a" + s
+    s = s[:32]
+    if not AGENT_NAME_RE.match(s):
+        s = fallback
+    return s
+
+
+def map_split(direction: Optional[str]) -> str:
+    if not direction:
+        return "right"
+    d = direction.lower()
+    if d in ("vertical", "right"):
+        return "right"
+    if d in ("horizontal", "down"):
+        return "down"
+    if d in ("right", "down"):
+        return d
+    return "right"
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    projects = discover(args.root, args.depth)
+    if args.json:
+        payload = [
+            {
+                "root": p.root,
+                "config_path": p.config_path,
+                "name": p.name,
+                "enabled": p.enabled,
+                "agent_kind": p.agent_kind,
+                "priority": p.priority,
+                "tabs": len(p.tabs),
+            }
+            for p in projects
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if not projects:
+        print("No projects with .herdr/config.toml found under", args.root)
+        return 0
+
+    print(f"{'PRI':>4}  {'EN':>3}  {'KIND':<10}  {'TABS':>4}  NAME  ROOT")
+    for p in projects:
+        en = "yes" if p.enabled else "no"
+        kind = p.agent_kind or "-"
+        print(
+            f"{p.priority:4d}  {en:>3}  {kind:<10}  {len(p.tabs):4d}  {p.name}  {p.root}"
+        )
+    print(f"\n{len(projects)} project(s)")
+    return 0
+
+
+def create_workspace(project: Project, dry_run: bool) -> Dict[str, Any]:
+    if dry_run:
+        print(f"[dry-run] herdr workspace create --cwd {project.root} --label {project.name} --no-focus")
+        return {
+            "result": {
+                "workspace": {"workspace_id": "dry:w"},
+                "tab": {"tab_id": "dry:t"},
+                "root_pane": {"pane_id": "dry:p"},
+            }
+        }
+    return herdr_run(
+        "workspace",
+        "create",
+        "--cwd",
+        project.root,
+        "--label",
+        project.name,
+        "--no-focus",
+    )
+
+
+def apply_layout(
+    project: Project,
+    workspace_id: str,
+    root_pane_id: str,
+    dry_run: bool,
+    force: bool = False,
+) -> None:
+    if not project.tabs:
+        print(f"    layout: none (minimal) for {project.name}")
+        return
+
+    print(f"    layout: applying {len(project.tabs)} tab(s) for {project.name}")
+    default_kind = project.agent_kind or "grok"
+    used_names: set = set()
+
+    for ti, tab in enumerate(project.tabs):
+        tab_name = tab.get("name") or f"tab{ti + 1}"
+        panes = tab.get("panes") or []
+        if not panes:
+            panes = [{"name": "shell", "agent": False}]
+
+        if ti == 0:
+            # Use existing root tab/pane
+            if dry_run:
+                print(f"[dry-run] tab rename root -> {tab_name}")
+            else:
+                # rename tab if we know its id from create / snapshot
+                try:
+                    # get active tab from workspace list after create
+                    snap = snapshot()
+                    for t in snap.get("tabs") or []:
+                        if t.get("workspace_id") == workspace_id:
+                            herdr_run("tab", "rename", t["tab_id"], str(tab_name))
+                            break
+                except HerdrError as exc:
+                    print(f"    !! tab rename skipped: {exc}", file=sys.stderr)
+            current_pane = root_pane_id
+        else:
+            if dry_run:
+                print(f"[dry-run] herdr tab create --workspace {workspace_id} --cwd {project.root} --label {tab_name} --no-focus")
+                current_pane = f"dry:p:t{ti}"
+            else:
+                created = herdr_run(
+                    "tab",
+                    "create",
+                    "--workspace",
+                    workspace_id,
+                    "--cwd",
+                    project.root,
+                    "--label",
+                    str(tab_name),
+                    "--no-focus",
+                )
+                current_pane = (
+                    ((created.get("result") or {}).get("root_pane") or {}).get("pane_id")
+                )
+                if not current_pane:
+                    raise HerdrError(f"tab create missing root_pane: {created}")
+
+        for pi, pane in enumerate(panes):
+            if pi > 0:
+                direction = map_split(pane.get("split"))
+                if dry_run:
+                    print(
+                        f"[dry-run] herdr pane split {current_pane} --direction {direction} --cwd {project.root} --no-focus"
+                    )
+                    current_pane = f"dry:p:t{ti}:p{pi}"
+                else:
+                    split = herdr_run(
+                        "pane",
+                        "split",
+                        current_pane,
+                        "--direction",
+                        direction,
+                        "--cwd",
+                        project.root,
+                        "--no-focus",
+                    )
+                    new_id = ((split.get("result") or {}).get("pane") or {}).get("pane_id")
+                    if not new_id:
+                        raise HerdrError(f"pane split missing pane_id: {split}")
+                    current_pane = new_id
+
+            # optional pane rename
+            pname = pane.get("name")
+            if pname and not dry_run:
+                try:
+                    herdr_run("pane", "rename", current_pane, str(pname))
+                except HerdrError:
+                    pass
+            elif pname and dry_run:
+                print(f"[dry-run] pane rename {current_pane} -> {pname}")
+
+            if pane.get("agent"):
+                kind = pane.get("agent_kind") or default_kind
+                raw_name = pane.get("agent_name") or pane.get("name") or f"agent{pi}"
+                agent_name = sanitize_agent_name(str(raw_name))
+                # ensure uniqueness among live (and within this apply)
+                base = agent_name
+                n = 2
+                while agent_name in used_names:
+                    suffix = f"-{n}"
+                    agent_name = sanitize_agent_name((base[: 32 - len(suffix)] + suffix))
+                    n += 1
+                used_names.add(agent_name)
+                if dry_run:
+                    print(
+                        f"[dry-run] herdr agent start {agent_name} --kind {kind} --pane {current_pane}"
+                    )
+                else:
+                    # brief settle for shell
+                    time.sleep(0.3)
+                    herdr_run(
+                        "agent",
+                        "start",
+                        agent_name,
+                        "--kind",
+                        str(kind),
+                        "--pane",
+                        current_pane,
+                    )
+            elif pane.get("command"):
+                cmd = str(pane["command"])
+                if dry_run:
+                    print(f"[dry-run] herdr pane run {current_pane} {cmd!r}")
+                else:
+                    time.sleep(0.2)
+                    herdr_run("pane", "run", current_pane, cmd)
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    projects = [p for p in discover(args.root, args.depth) if p.enabled]
+    if not projects:
+        print("No enabled projects with .herdr/config.toml under", args.root)
+        return 0
+
+    try:
+        snap = snapshot()
+    except HerdrError as exc:
+        print(f"XX  cannot snapshot herdr session (is the server running?): {exc}", file=sys.stderr)
+        return 1
+
+    ws_map = map_workspaces(snap)
+    opened = 0
+    laid_out = 0
+    skipped = 0
+    errors = 0
+
+    for project in projects:
+        cover = covering_workspace(project.root, ws_map)
+        if cover is None:
+            print(f"-> open  {project.name}  ({project.root})")
+            try:
+                created = create_workspace(project, args.dry_run)
+                res = created.get("result") or {}
+                wid = (res.get("workspace") or {}).get("workspace_id")
+                root_pane = (res.get("root_pane") or {}).get("pane_id")
+                if not args.dry_run and (not wid or not root_pane):
+                    raise HerdrError(f"workspace create missing ids: {created}")
+                opened += 1
+                if project.has_layout():
+                    apply_layout(project, wid or "dry:w", root_pane or "dry:p", args.dry_run)
+                    laid_out += 1
+                # update local map so later projects see this cwd as covered
+                if not args.dry_run and wid:
+                    ws_map[wid] = {
+                        "meta": {
+                            "workspace_id": wid,
+                            "tab_count": 1,
+                            "pane_count": 1,
+                        },
+                        "pane_cwds": {project.root},
+                        "panes": [],
+                        "fresh": False,  # just laid out or minimal
+                    }
+            except HerdrError as exc:
+                print(f"!!  failed open {project.name}: {exc}", file=sys.stderr)
+                errors += 1
+            continue
+
+        wid, info = cover
+        if info["fresh"] and project.has_layout():
+            print(f"-> layout {project.name}  (fresh workspace {wid})")
+            try:
+                panes = info["panes"]
+                root_pane = panes[0]["pane_id"] if panes else None
+                if not root_pane and not args.dry_run:
+                    # fetch pane list
+                    pl = herdr_run("pane", "list", "--workspace", wid)
+                    panes = (pl.get("result") or pl).get("panes") or []
+                    root_pane = panes[0]["pane_id"] if panes else None
+                if not root_pane and not args.dry_run:
+                    raise HerdrError("could not resolve root pane for fresh workspace")
+                apply_layout(
+                    project,
+                    wid,
+                    root_pane or "dry:p",
+                    args.dry_run,
+                )
+                laid_out += 1
+                info["fresh"] = False
+            except HerdrError as exc:
+                print(f"!!  failed layout {project.name}: {exc}", file=sys.stderr)
+                errors += 1
+        else:
+            reason = "already open"
+            if not info["fresh"] and project.has_layout():
+                reason = "already open (not fresh — skip layout)"
+            print(f"-- skip  {project.name}  ({reason}, {wid})")
+            skipped += 1
+
+    print(
+        f"\nreconcile done: opened={opened} laid_out={laid_out} skipped={skipped} errors={errors}"
+        + (" [dry-run]" if args.dry_run else "")
+    )
+    return 1 if errors else 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    cwd = canonical(args.cwd or os.getcwd())
+    cfg = Path(cwd) / ".herdr" / "config.toml"
+    if not cfg.is_file():
+        print(f"XX  no .herdr/config.toml under {cwd}", file=sys.stderr)
+        return 1
+    try:
+        project = load_project(cfg)
+    except Exception as exc:  # noqa: BLE001
+        print(f"XX  bad config: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        snap = snapshot()
+    except HerdrError as exc:
+        print(f"XX  cannot snapshot: {exc}", file=sys.stderr)
+        return 1
+
+    ws_map = map_workspaces(snap)
+    cover = covering_workspace(project.root, ws_map)
+    if cover is None:
+        print(f"XX  no open workspace for {project.root}; run reconcile first", file=sys.stderr)
+        return 1
+
+    wid, info = cover
+    if not info["fresh"] and not args.force_layout:
+        print(
+            f"XX  workspace {wid} is not fresh. Re-apply is destructive; pass --force-layout to continue.",
+            file=sys.stderr,
+        )
+        return 1
+    if args.force_layout and not info["fresh"]:
+        print(
+            f"!!  --force-layout: rebuilding layout on non-fresh workspace {wid}",
+            file=sys.stderr,
+        )
+
+    panes = info["panes"]
+    root_pane = panes[0]["pane_id"] if panes else None
+    if not root_pane:
+        pl = herdr_run("pane", "list", "--workspace", wid)
+        panes = (pl.get("result") or pl).get("panes") or []
+        root_pane = panes[0]["pane_id"] if panes else None
+    if not root_pane:
+        print("XX  no root pane", file=sys.stderr)
+        return 1
+
+    try:
+        # Force path still uses sequential apply on current root pane / first tab.
+        # Full destructive tab replace is not implemented without layout.apply;
+        # document that force on non-fresh may stack tabs unless user closed extras.
+        apply_layout(project, wid, root_pane, args.dry_run, force=args.force_layout)
+    except HerdrError as exc:
+        print(f"XX  apply failed: {exc}", file=sys.stderr)
+        return 1
+    print("apply ok" + (" [dry-run]" if args.dry_run else ""))
+    return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    cwd = Path(args.cwd or os.getcwd()).resolve()
+    template = args.template or "minimal"
+    src = TEMPLATES_DIR / f"{template}.toml"
+    if not src.is_file():
+        print(f"XX  unknown template {template!r}; try minimal|standard|fullstack", file=sys.stderr)
+        return 2
+    dest_dir = cwd / ".herdr"
+    dest = dest_dir / "config.toml"
+    if dest.exists() and not args.force:
+        print(f"XX  {dest} already exists (use --force to overwrite)", file=sys.stderr)
+        return 1
+    text = src.read_text(encoding="utf-8")
+    # default name to directory basename
+    text = text.replace('name = "my-project"', f'name = "{cwd.name}"', 1)
+    if args.dry_run:
+        print(f"[dry-run] write {dest} from template {template}")
+        print(text)
+        return 0
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    print(f"wrote {dest}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="herdr-discover",
+        description="Discover .herdr/config.toml projects and open them as Herdr spaces.",
+    )
+    p.add_argument(
+        "--root",
+        default=os.environ.get("HERDR_DISCOVER_ROOT") or os.path.expanduser("~"),
+        help="Scan root (default: $HOME or HERDR_DISCOVER_ROOT)",
+    )
+    p.add_argument(
+        "--depth",
+        type=int,
+        default=int(os.environ.get("HERDR_DISCOVER_DEPTH") or DEFAULT_DEPTH),
+        help=f"Max directory depth under root (default {DEFAULT_DEPTH})",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print actions only (also accepted after subcommand)",
+    )
+
+    sub = p.add_subparsers(dest="command", required=True)
+
+    s = sub.add_parser("scan", help="List discovered projects")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_scan)
+
+    r = sub.add_parser("reconcile", help="Open missing spaces; layout fresh ones")
+    r.add_argument("--dry-run", action="store_true", help="Print actions only")
+    r.set_defaults(func=cmd_reconcile)
+
+    a = sub.add_parser("apply", help="Apply layout for one project workspace")
+    a.add_argument("--cwd", default=None, help="Project root (default: cwd)")
+    a.add_argument(
+        "--force-layout",
+        action="store_true",
+        help="Apply even if workspace is not fresh (destructive / may stack tabs)",
+    )
+    a.add_argument("--dry-run", action="store_true", help="Print actions only")
+    a.set_defaults(func=cmd_apply)
+
+    i = sub.add_parser("init", help="Scaffold .herdr/config.toml")
+    i.add_argument(
+        "--template",
+        choices=["minimal", "standard", "fullstack"],
+        default="minimal",
+    )
+    i.add_argument("--cwd", default=None)
+    i.add_argument("--force", action="store_true")
+    i.add_argument("--dry-run", action="store_true", help="Print actions only")
+    i.set_defaults(func=cmd_init)
+
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except HerdrError as exc:
+        print(f"XX  {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

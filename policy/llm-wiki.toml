@@ -1,0 +1,25 @@
+# Machine policy for per-repo docs/* LLM wikis (herdr-bootstrap).
+# Bump policy_version when rules change; projects pin the version in .herdr/config.toml.
+# herdr-docs-wiki doctor reports drift; fix --apply-policy converges structure (not prose).
+
+policy_version = 1
+wiki_root = "docs"
+max_page_lines = 280
+require_index = true
+require_log = true
+require_frontmatter = true
+forbid_overlap = true
+required_skill = "docs-wiki"
+agents_md_section_id = "docs-wiki"
+
+# Rubric weights (must sum to 100)
+weight_herdr_config = 10
+weight_policy_pin = 10
+weight_index = 15
+weight_log = 10
+weight_agents_md = 15
+weight_page_lines = 15
+weight_frontmatter = 10
+weight_overlap = 5
+weight_status = 5
+weight_freshness = 5

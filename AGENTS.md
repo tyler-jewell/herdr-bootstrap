@@ -67,6 +67,41 @@ done
 
 Canonical skill: `~/.agents/skills/herdr`. Drop the workaround once #1883 ships and a reinstall populates native dirs.
 
+## Multi-project spaces (convention)
+
+Herdr core has **no** per-project `config.toml`. This repo’s convention:
+
+- **Global UI:** `~/.config/herdr/config.toml`
+- **Per-project space layout (git):** `<repo>/.herdr/config.toml`
+- **Discovery tool:** [`bin/herdr-discover`](./bin/herdr-discover) — scan `$HOME` for that file, open workspaces, apply layout only when the space is **fresh**
+- **Rules:** [`docs/HERDR_RULES.md`](./docs/HERDR_RULES.md)
+
+Do not invent a second global catalog or claim native Herdr project config. Match workspaces by pane **cwd** (via `herdr api snapshot`), never by label alone.
+
+## Source code truth: LSP (Rust + Go)
+
+When coding, searching, or answering questions about **Rust or Go source on this machine**:
+
+1. **Prefer the live codebase + Grok `lsp` tool** (`goToDefinition`, `findReferences`, `hover`, symbols) over docs or memory.
+2. Configured servers (project [`.grok/lsp.json`](./.grok/lsp.json)): **rust** → `rust-analyzer`, **go** → `gopls`.
+3. **Latest code is always on disk here**; `docs/` and comments can lag — treat docs as secondary.
+4. Requires `features.lsp_tools = true` in `~/.grok/config.toml` (from `bin/sync-grok-config`) and both servers on `PATH`.
+
+Do this for every agent session in this repo (and any project that inherits this convention).
+
+## Code gates (per language — zero warnings)
+
+When finishing Rust/Go work, run the matching Herdr plugin (or CLI). **World-class only: no warnings, no local lint ignores/overrides.**
+
+| Language | Plugin / CLI | What it enforces |
+|----------|----------------|------------------|
+| Rust | `herdr-code-gate-rust` | `fmt --check`, `clippy -D warnings` (+ all/pedantic), `cargo check`, ban `#[allow]` / cap-lints allow |
+| Go | `herdr-code-gate-go` | `gofmt -l`, `go vet`, `staticcheck`, `go build`, ban `//nolint` / golangci disable configs |
+
+- Auto-hook on agent **done/idle** when the tree is **cheap** (size limits); use `--force` for full runs.
+- Do **not** add `#[allow]`, `//nolint`, or project linter configs that silence rules — fix the code instead.
+
+
 ## Safety rules (agents)
 
 - If `HERDR_ENV` is not `1`, do **not** control panes/agents with the herdr skill; teach the human instead (agent guide).
@@ -74,6 +109,8 @@ Canonical skill: `~/.agents/skills/herdr`. Drop the workaround once #1883 ships 
 - Do **not** run `herdr server stop` unless the human explicitly wants to kill the server and all pane processes.
 - Do not invent keybindings, config keys, or CLI flags; read https://herdr.dev/docs/ and the upstream skill.
 - Prefer user-local installs under `$HOME` (no sudo).
+- Do not auto-close workspaces or re-apply layout on non-fresh spaces without an explicit `--force-layout`.
+
 
 ## Lessons learned (greenfield bootstrap)
 
@@ -96,3 +133,23 @@ test -f ~/.agents/skills/herdr/SKILL.md
 test -f ~/.grok/skills/herdr/SKILL.md
 herdr integration status
 ```
+
+<!-- docs-wiki:start -->
+## Project wiki (`docs/`)
+
+This repo’s **live knowledge view** is the markdown wiki under `docs/`.
+Rules: lean, non-overlapping topics, **≤280 lines per page**, updated when work lands (before you treat a task as done).
+
+### Before answering project questions
+1. Use skill **`docs-wiki`** / `/docs-wiki`, or read `docs/index.md` then the relevant pages.
+2. Prefer `docs/status/` for current state.
+3. Cite paths under `docs/`.
+
+### When finishing work (agent `done` / before you commit)
+1. Distill what changed into the **one** correct `docs/` page (update existing; do not duplicate).
+2. Update `docs/index.md` and append a line to `docs/log.md`.
+3. Split or trim any page over 280 lines.
+
+Policy pin: `.herdr/config.toml` → `[wiki].policy_version` (machine policy in herdr-bootstrap `policy/llm-wiki.toml`).
+Doctor: Herdr action **Docs wiki doctor** or `herdr-docs-wiki doctor --current`.
+<!-- docs-wiki:end -->

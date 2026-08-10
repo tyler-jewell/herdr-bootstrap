@@ -1,0 +1,7 @@
+# Project-scoped Grok config (native).
+# Team source of truth for global settings: config.yaml (sync with bin/sync-grok-config).
+#
+# Grok only loads [mcp_servers], [plugins], and [permission] from project config.toml.
+# LSP: lsp.json  |  [features].lsp_tools: ~/.grok/config.toml via sync
+
+# Add project MCP/plugins/permissions here when needed.

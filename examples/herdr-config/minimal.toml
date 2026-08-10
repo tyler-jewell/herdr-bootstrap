@@ -1,0 +1,9 @@
+# Minimal opt-in: open as a Herdr space with a single root shell.
+# Copy to <repo>/.herdr/config.toml
+
+name = "my-project"
+enabled = true
+priority = 100
+# agent_kind = "grok"
+
+# No [[tabs]] → workspace create only; no full-stack layout.

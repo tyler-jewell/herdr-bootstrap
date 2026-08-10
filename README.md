@@ -78,6 +78,93 @@ node -v
 test -f ~/.agents/skills/herdr/SKILL.md && echo skill-ok
 ```
 
+## Grok config (version-controlled) + Rust/Go LSP
+
+**Source of truth:** [`.grok/config.yaml`](./.grok/config.yaml) (edit + commit this file).
+
+| File | Role |
+|------|------|
+| `.grok/config.yaml` | Team-owned full Grok global settings intent |
+| `.grok/lsp.json` | Project LSP: **rust** (`rust-analyzer`) + **go** (`gopls`) |
+| `.grok/config.toml` | Project-native MCP/plugins/permissions only |
+| `bin/sync-grok-config` | **Overrides** `~/.grok/config.yaml` + regenerates `~/.grok/config.toml` |
+
+```bash
+# After editing .grok/config.yaml:
+bin/sync-grok-config
+
+# Or full bootstrap (also installs rust-analyzer + gopls when missing):
+sh install.sh
+```
+
+Agents **must** use the Grok `lsp` tool when coding or searching Rust/Go sources — live code on this machine is authoritative; docs can lag (see [AGENTS.md](./AGENTS.md)).
+
+**Verify LSP:**
+
+```bash
+test -f .grok/lsp.json
+command -v rust-analyzer gopls
+grep lsp_tools ~/.grok/config.toml   # true after sync
+# Restart Grok; passive diagnostics need lsp.json + servers;
+# model lsp tool also needs lsp_tools=true
+```
+
+Details: [`.grok/README.md`](./.grok/README.md).
+
+## Code gates (one plugin per language)
+
+Strict format/lint/build after agent work (or on demand). **No warnings; no local lint suppressions/overrides.**
+
+| Plugin | Detects | Commands |
+|--------|---------|----------|
+| [`plugins/herdr-code-gate-rust`](./plugins/herdr-code-gate-rust) | `Cargo.toml` | `fmt --check`, `clippy -D warnings`, `cargo check` |
+| [`plugins/herdr-code-gate-go`](./plugins/herdr-code-gate-go) | `go.mod` | `gofmt`, `go vet`, `staticcheck`, `go build` |
+
+Hook: `pane.agent_status_changed` → run when agent is `done`/`idle` and the tree is **cheap** (size limits). CLI: `herdr-code-gate-rust|go check --current [--force]`.
+
+## Multi-project spaces (`herdr-discover`)
+
+Herdr has **no** native per-project config. This bootstrap defines a convention:
+
+1. Put **`<repo>/.herdr/config.toml`** in any project under `$HOME` (version-controlled with that repo).
+2. Run **`herdr-discover reconcile`** while a Herdr server is up — it opens one workspace per discovered project and applies full-stack layout only on **fresh** spaces.
+
+```bash
+# from this repo
+./bin/herdr-discover scan
+./bin/herdr-discover reconcile --dry-run
+./bin/herdr-discover reconcile
+
+# scaffold opt-in in another project
+cd ~/your-project
+/path/to/herdr-bootstrap/bin/herdr-discover init --template standard
+```
+
+Optional: `ln -sfn "$PWD/bin/herdr-discover" ~/.local/bin/herdr-discover`
+
+Rules, safety, and schema: **[docs/HERDR_RULES.md](./docs/HERDR_RULES.md)**.  
+Templates: [examples/herdr-config/](./examples/herdr-config/).
+
+## Project wiki (`docs/*`) + doctor plugin
+
+Each Herdr space’s **live knowledge** is a lean LLM wiki under that repo’s **`docs/`** (≤280 lines/page, no overlapping topics). Agents use skill **`docs-wiki`** / `/docs-wiki`.
+
+| Piece | Role |
+|-------|------|
+| `policy/llm-wiki.toml` | Machine policy version + rubric weights |
+| `skills/docs-wiki` | Global agent skill (search/update `docs/`) |
+| `plugins/herdr-docs-wiki` | **Go Herdr plugin** — doctor, policy fix, agent-done / focus hooks (no git hooks) |
+| `AGENTS.md` markers | Routes agents to the wiki |
+
+```bash
+herdr-docs-wiki doctor              # all .herdr projects
+herdr-docs-wiki doctor --current
+herdr-docs-wiki fix --current --apply-policy
+# In Herdr: plugin actions or prefix+shift+d (after install)
+```
+
+Wiki index for this repo: [docs/index.md](./docs/index.md).
+
 ## Docs for development
 
 - Docs: https://herdr.dev/docs/

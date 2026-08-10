@@ -1,0 +1,34 @@
+# Full-stack layout: builder + reviewer, dev server, checks shell.
+# Copy to <repo>/.herdr/config.toml and adjust commands for the project.
+
+name = "my-project"
+enabled = true
+agent_kind = "grok"
+priority = 20
+
+[[tabs]]
+name = "agents"
+  [[tabs.panes]]
+  name = "builder"
+  agent = true
+  [[tabs.panes]]
+  name = "reviewer"
+  agent = true
+  agent_name = "reviewer"
+  # agent_kind = "codex"   # optional per-pane override
+  split = "right"
+
+[[tabs]]
+name = "dev"
+  [[tabs.panes]]
+  name = "server"
+  command = "npm run dev"
+  [[tabs.panes]]
+  name = "shell"
+  split = "down"
+
+[[tabs]]
+name = "checks"
+  [[tabs.panes]]
+  name = "test"
+  # command = "npm test"

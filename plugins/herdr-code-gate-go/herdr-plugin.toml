@@ -1,0 +1,25 @@
+id = "herdr.code-gate-go"
+name = "Code Gate (Go)"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Strict Go format/lint/check: zero warnings, no nolint, when cheap"
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["go", "build", "-o", "bin/herdr-code-gate-go", "./cmd/herdr-code-gate-go"]
+
+[[actions]]
+id = "check"
+title = "Go code gate (current space)"
+contexts = ["workspace"]
+command = ["./bin/herdr-code-gate-go", "check", "--current"]
+
+[[actions]]
+id = "check-fix"
+title = "Go code gate + gofmt (write)"
+contexts = ["workspace"]
+command = ["./bin/herdr-code-gate-go", "check", "--current", "--fix"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bin/herdr-code-gate-go", "hook", "agent-status"]

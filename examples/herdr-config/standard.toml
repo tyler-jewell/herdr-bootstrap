@@ -1,0 +1,18 @@
+# Standard layout: one agent + a free shell tab.
+# Copy to <repo>/.herdr/config.toml and edit name / agent_kind / commands.
+
+name = "my-project"
+enabled = true
+agent_kind = "grok"
+priority = 50
+
+[[tabs]]
+name = "agents"
+  [[tabs.panes]]
+  name = "builder"
+  agent = true
+
+[[tabs]]
+name = "shell"
+  [[tabs.panes]]
+  name = "shell"

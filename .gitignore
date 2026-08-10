@@ -4,5 +4,14 @@
 .env.*
 auth.json
 *.pem
-.grok/
 node_modules/
+
+# Built plugin binaries (rebuild via install.sh / go build)
+plugins/*/bin/
+
+# Track team Grok config; ignore anything else under .grok/
+.grok/*
+!.grok/config.yaml
+!.grok/config.toml
+!.grok/lsp.json
+!.grok/README.md

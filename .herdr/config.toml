@@ -1,0 +1,19 @@
+# Opt-in: this repo is a first-class Herdr space for herdr-discover.
+# See docs/HERDR_RULES.md
+
+name = "herdr-bootstrap"
+enabled = true
+agent_kind = "grok"
+priority = 10
+
+# Minimal layout — bootstrap is tooling, not a long-running product stack.
+# Uncomment for a dedicated agent tab on fresh open:
+# [[tabs]]
+# name = "agents"
+#   [[tabs.panes]]
+#   name = "builder"
+#   agent = true
+
+[wiki]
+enabled = true
+policy_version = 1

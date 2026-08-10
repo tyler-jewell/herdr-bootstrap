@@ -1,0 +1,25 @@
+id = "herdr.code-gate-rust"
+name = "Code Gate (Rust)"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Strict Rust format/lint/check: zero warnings, no allows/ignores, when cheap"
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["go", "build", "-o", "bin/herdr-code-gate-rust", "./cmd/herdr-code-gate-rust"]
+
+[[actions]]
+id = "check"
+title = "Rust code gate (current space)"
+contexts = ["workspace"]
+command = ["./bin/herdr-code-gate-rust", "check", "--current"]
+
+[[actions]]
+id = "check-fix"
+title = "Rust code gate + cargo fmt (write)"
+contexts = ["workspace"]
+command = ["./bin/herdr-code-gate-rust", "check", "--current", "--fix"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bin/herdr-code-gate-rust", "hook", "agent-status"]

@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
 # Herdr machine bootstrap — idempotent install/update of herdr, Node/npx, Grok,
-# the herdr agent skill, agent-native skill symlinks (#1874 / PR #1883), and
-# Grok integration hooks.
+# agent skills (herdr, llm-wiki pattern, docs-wiki), agent-native skill symlinks
+# (#1874 / PR #1883), Grok integration hooks, and the herdr-docs-wiki Go plugin.
 #
 # Usage:
-#   sh install.sh [--skip-node] [--skip-grok] [--skip-skills] [--skip-integrations] [--dry-run]
+#   sh install.sh [--skip-node] [--skip-grok] [--skip-skills] [--skip-integrations] [--skip-plugin] [--dry-run]
 #   # or: curl -fsSL <raw-url-of-this-repo>/install.sh | sh
 #
 # Safety:
@@ -20,6 +20,10 @@ SKIP_NODE=0
 SKIP_GROK=0
 SKIP_SKILLS=0
 SKIP_INTEGRATIONS=0
+SKIP_PLUGIN=0
+SKIP_RUST_ANALYZER=0
+SKIP_GOPLS=0
+SKIP_GROK_CONFIG_SYNC=0
 DRY_RUN=0
 
 NODE_VERSION="${NODE_VERSION:-22.18.0}"
@@ -29,6 +33,12 @@ LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 SHARE_HERDR="${SHARE_HERDR:-$HOME/.local/share/herdr}"
 APPLY_SKILLS_SYMLINK_WORKAROUND="${APPLY_SKILLS_SYMLINK_WORKAROUND:-1}"
 
+# Resolve repo root when install.sh is run from a clone (not curl|sh).
+BOOTSTRAP_ROOT=""
+case "$0" in
+  */*) BOOTSTRAP_ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)" ;;
+esac
+
 # shellcheck disable=SC2034
 for arg in "$@"; do
   case "$arg" in
@@ -36,9 +46,13 @@ for arg in "$@"; do
     --skip-grok) SKIP_GROK=1 ;;
     --skip-skills) SKIP_SKILLS=1 ;;
     --skip-integrations) SKIP_INTEGRATIONS=1 ;;
+    --skip-plugin) SKIP_PLUGIN=1 ;;
+    --skip-rust-analyzer) SKIP_RUST_ANALYZER=1 ;;
+    --skip-gopls) SKIP_GOPLS=1 ;;
+    --skip-grok-config-sync) SKIP_GROK_CONFIG_SYNC=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -283,26 +297,59 @@ install_skill() {
         -o "$HOME/.agents/skills/herdr/SKILL.md" || warn "fallback skill download failed"
     fi
   fi
+
+  # Karpathy pattern skill (literacy); house docs-wiki is operational truth for docs/*
+  log "installing llm-wiki pattern skill (ar9av/obsidian-wiki --skill llm-wiki -g)"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would run: npx --yes skills add ar9av/obsidian-wiki --skill llm-wiki -g -y"
+  else
+    npx --yes skills add ar9av/obsidian-wiki --skill llm-wiki -g -y || \
+      warn "llm-wiki skills add failed (non-fatal)"
+  fi
+
+  install_docs_wiki_skill
+}
+
+install_docs_wiki_skill() {
+  # House skill: search/update per-repo docs/* (from this bootstrap tree when present)
+  src=""
+  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/skills/docs-wiki/SKILL.md" ]; then
+    src="$BOOTSTRAP_ROOT/skills/docs-wiki"
+  fi
+  dest="$HOME/.agents/skills/docs-wiki"
+  if [ -z "$src" ]; then
+    warn "docs-wiki skill source not found (run install from herdr-bootstrap clone)"
+    return 0
+  fi
+  log "installing house docs-wiki skill → $dest"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would copy $src → $dest"
+    return 0
+  fi
+  mkdir -p "$dest"
+  # copy tree (portable)
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$src/" "$dest/"
+  else
+    rm -rf "$dest"
+    mkdir -p "$dest"
+    cp -R "$src/." "$dest/"
+  fi
 }
 
 # --- #1874 / PR #1883 workaround ---
 
-link_skill_native_dirs() {
-  if [ "$APPLY_SKILLS_SYMLINK_WORKAROUND" != 1 ]; then
-    log "skip skills symlink workaround (APPLY_SKILLS_SYMLINK_WORKAROUND=0)"
+# link_one_skill_native <skill-name>  e.g. herdr | docs-wiki | llm-wiki
+link_one_skill_native() {
+  skill_name="$1"
+  CANONICAL="$HOME/.agents/skills/$skill_name"
+  if [ ! -f "$CANONICAL/SKILL.md" ]; then
+    warn "no canonical skill at $CANONICAL; skip native links for $skill_name"
     return 0
   fi
 
-  CANONICAL="$HOME/.agents/skills/herdr"
-  if [ ! -d "$CANONICAL" ]; then
-    warn "no canonical skill at $CANONICAL; skip native-dir links"
-    return 0
-  fi
+  log "linking agent-native skill dirs → $CANONICAL ($skill_name)"
 
-  log "linking agent-native skill dirs → $CANONICAL (skills#1874 / PR#1883 workaround)"
-
-  # Grok is not in skills CLI agent table — always include it.
-  # Do not use --agent '*'; only these dirs.
   set -- \
     "$HOME/.codex/skills" \
     "$HOME/.cursor/skills" \
@@ -318,16 +365,16 @@ link_skill_native_dirs() {
   note="$SHARE_HERDR/skills-pr-1883-workaround.txt"
   if [ "$DRY_RUN" = 0 ]; then
     {
-      echo "Workaround applied: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "Workaround applied: $(date -u +%Y-%m-%dT%H:%M:%SZ) skill=$skill_name"
       echo "Bug: https://github.com/vercel-labs/skills/issues/1874"
       echo "Fix PR: https://github.com/vercel-labs/skills/pull/1883"
       echo "Canonical: $CANONICAL"
-    } >"$note"
+    } >>"$note"
   fi
 
   for dir in "$@"; do
     if [ "$DRY_RUN" = 1 ]; then
-      log "[dry-run] would link $dir/herdr"
+      log "[dry-run] would link $dir/$skill_name"
       continue
     fi
     mkdir -p "$dir"
@@ -336,10 +383,10 @@ link_skill_native_dirs() {
     else
       rel="$CANONICAL"
     fi
-    # if existing real dir with same SKILL.md, replace with symlink
-    target="$dir/herdr"
+    target="$dir/$skill_name"
     if [ -d "$target" ] && [ ! -L "$target" ]; then
-      if [ -f "$target/SKILL.md" ] && cmp -s "$target/SKILL.md" "$CANONICAL/SKILL.md" 2>/dev/null; then
+      if [ -f "$target/SKILL.md" ] && [ -f "$CANONICAL/SKILL.md" ] && \
+        cmp -s "$target/SKILL.md" "$CANONICAL/SKILL.md" 2>/dev/null; then
         rm -rf "$target"
       else
         warn "keeping non-matching real dir: $target"
@@ -349,6 +396,246 @@ link_skill_native_dirs() {
     ln -sfn "$rel" "$target"
     echo "linked: $target -> $rel" >>"$note"
   done
+}
+
+link_skill_native_dirs() {
+  if [ "$APPLY_SKILLS_SYMLINK_WORKAROUND" != 1 ]; then
+    log "skip skills symlink workaround (APPLY_SKILLS_SYMLINK_WORKAROUND=0)"
+    return 0
+  fi
+  # Do not use --agent '*'; only explicit dirs inside link_one_skill_native.
+  link_one_skill_native herdr
+  link_one_skill_native docs-wiki
+  # llm-wiki name depends on package layout; try common names
+  if [ -d "$HOME/.agents/skills/llm-wiki" ]; then
+    link_one_skill_native llm-wiki
+  fi
+}
+
+# --- Go plugin herdr-docs-wiki ---
+
+install_docs_wiki_plugin() {
+  if [ "$SKIP_PLUGIN" = 1 ]; then
+    log "skip docs-wiki plugin (--skip-plugin)"
+    return 0
+  fi
+  if [ -z "$BOOTSTRAP_ROOT" ] || [ ! -d "$BOOTSTRAP_ROOT/plugins/herdr-docs-wiki" ]; then
+    warn "plugin sources missing (run install from herdr-bootstrap clone)"
+    return 0
+  fi
+  if ! command -v go >/dev/null 2>&1; then
+    warn "go not on PATH; skip herdr-docs-wiki plugin build (install Go ≥1.22)"
+    return 0
+  fi
+  if ! command -v herdr >/dev/null 2>&1; then
+    warn "herdr not on PATH; skip plugin link"
+    return 0
+  fi
+
+  plug="$BOOTSTRAP_ROOT/plugins/herdr-docs-wiki"
+  log "building herdr-docs-wiki plugin"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would go build + herdr plugin link $plug"
+    return 0
+  fi
+  mkdir -p "$plug/bin"
+  (cd "$plug" && go build -o bin/herdr-docs-wiki ./cmd/herdr-docs-wiki) || {
+    warn "go build failed"
+    return 0
+  }
+  ln -sfn "$plug/bin/herdr-docs-wiki" "$LOCAL_BIN/herdr-docs-wiki"
+  ln -sfn "$plug/bin/herdr-docs-wiki" "$LOCAL_BIN/herdr-doctor"
+  # link plugin into Herdr (idempotent)
+  herdr plugin link "$plug" 2>/dev/null || \
+    herdr plugin link "$plug" --yes 2>/dev/null || \
+    warn "herdr plugin link failed (is server compatible? try: herdr plugin link $plug)"
+
+  # optional keybinding once
+  cfg="$HOME/.config/herdr/config.toml"
+  mkdir -p "$(dirname "$cfg")"
+  touch "$cfg"
+  marker="# >>> herdr-bootstrap docs-wiki key >>>"
+  if ! grep -F "$marker" "$cfg" >/dev/null 2>&1; then
+    log "appending docs-wiki doctor keybinding to $cfg"
+    cat >>"$cfg" <<'KEYEOF'
+
+# >>> herdr-bootstrap docs-wiki key >>>
+[[keys.command]]
+key = "prefix+shift+d"
+type = "plugin_action"
+command = "herdr.docs-wiki.doctor-current"
+description = "docs wiki doctor (current space)"
+# <<< herdr-bootstrap docs-wiki key <<<
+KEYEOF
+    herdr server reload-config 2>/dev/null || true
+  fi
+
+  install_code_gate_plugins
+}
+
+# --- Per-language code gates (Rust / Go) ---
+
+install_code_gate_plugins() {
+  if [ "$SKIP_PLUGIN" = 1 ]; then
+    return 0
+  fi
+  if [ -z "$BOOTSTRAP_ROOT" ]; then
+    return 0
+  fi
+  if ! command -v go >/dev/null 2>&1 || ! command -v herdr >/dev/null 2>&1; then
+    warn "go/herdr missing; skip code-gate plugins"
+    return 0
+  fi
+
+  # staticcheck for Go gate
+  if ! command -v staticcheck >/dev/null 2>&1; then
+    log "installing staticcheck (Go code gate)"
+    if [ "$DRY_RUN" = 0 ]; then
+      mkdir -p "$LOCAL_BIN"
+      GOBIN="$LOCAL_BIN" go install honnef.co/go/tools/cmd/staticcheck@latest || \
+        warn "staticcheck install failed"
+    fi
+  fi
+
+  for name in herdr-code-gate-rust herdr-code-gate-go; do
+    plug="$BOOTSTRAP_ROOT/plugins/$name"
+    if [ ! -d "$plug" ]; then
+      warn "missing $plug"
+      continue
+    fi
+    log "building $name"
+    if [ "$DRY_RUN" = 1 ]; then
+      log "[dry-run] would build/link $name"
+      continue
+    fi
+    mkdir -p "$plug/bin"
+    (cd "$plug" && go build -o "bin/$name" "./cmd/$name") || {
+      warn "go build $name failed"
+      continue
+    }
+    ln -sfn "$plug/bin/$name" "$LOCAL_BIN/$name"
+    herdr plugin link "$plug" 2>/dev/null || \
+      herdr plugin link "$plug" --yes 2>/dev/null || \
+      warn "herdr plugin link $name failed"
+  done
+}
+
+# --- rust-analyzer (Grok Rust LSP) ---
+
+install_rust_analyzer() {
+  if [ "$SKIP_RUST_ANALYZER" = 1 ]; then
+    log "skip rust-analyzer (--skip-rust-analyzer)"
+    return 0
+  fi
+  if command -v rust-analyzer >/dev/null 2>&1; then
+    log "rust-analyzer present: $(command -v rust-analyzer)"
+    return 0
+  fi
+  log "installing rust-analyzer"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would install rust-analyzer"
+    return 0
+  fi
+  if command -v rustup >/dev/null 2>&1; then
+    rustup component add rust-analyzer || warn "rustup component add rust-analyzer failed"
+    if command -v rust-analyzer >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    brew install rust-analyzer || warn "brew install rust-analyzer failed"
+    if command -v rust-analyzer >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  # Portable binary into ~/.local/bin
+  arch="$(uname -m)"
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$os-$arch" in
+    darwin-arm64|darwin-aarch64) asset="rust-analyzer-aarch64-apple-darwin.gz" ;;
+    darwin-x86_64) asset="rust-analyzer-x86_64-apple-darwin.gz" ;;
+    linux-x86_64|linux-amd64) asset="rust-analyzer-x86_64-unknown-linux-gnu.gz" ;;
+    linux-arm64|linux-aarch64) asset="rust-analyzer-aarch64-unknown-linux-gnu.gz" ;;
+    *)
+      warn "no portable rust-analyzer asset for $os-$arch; install manually"
+      return 0
+      ;;
+  esac
+  url="https://github.com/rust-lang/rust-analyzer/releases/latest/download/$asset"
+  tmp="$(mktemp)"
+  if curl -fsSL "$url" -o "$tmp"; then
+    mkdir -p "$LOCAL_BIN"
+    gunzip -c "$tmp" >"$LOCAL_BIN/rust-analyzer" || {
+      # some releases may already be uncompressed naming
+      warn "gunzip failed; trying raw copy"
+      cp "$tmp" "$LOCAL_BIN/rust-analyzer" 2>/dev/null || true
+    }
+    chmod +x "$LOCAL_BIN/rust-analyzer"
+    rm -f "$tmp"
+    log "installed $LOCAL_BIN/rust-analyzer"
+  else
+    warn "download rust-analyzer failed: $url"
+    rm -f "$tmp"
+  fi
+  command -v rust-analyzer >/dev/null 2>&1 || warn "rust-analyzer still not on PATH"
+}
+
+# --- gopls (Grok Go LSP) ---
+
+install_gopls() {
+  if [ "$SKIP_GOPLS" = 1 ]; then
+    log "skip gopls (--skip-gopls)"
+    return 0
+  fi
+  if command -v gopls >/dev/null 2>&1; then
+    log "gopls present: $(command -v gopls)"
+    return 0
+  fi
+  log "installing gopls"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would install gopls"
+    return 0
+  fi
+  if ! command -v go >/dev/null 2>&1; then
+    warn "go not on PATH; cannot install gopls (install Go first)"
+    return 0
+  fi
+  mkdir -p "$LOCAL_BIN"
+  # Install into user-local bin so PATH picks it up without GOPATH/bin puzzles
+  if GOBIN="$LOCAL_BIN" go install golang.org/x/tools/gopls@latest; then
+    log "installed $LOCAL_BIN/gopls"
+  else
+    warn "go install gopls failed"
+  fi
+  command -v gopls >/dev/null 2>&1 || warn "gopls still not on PATH (ensure $LOCAL_BIN is on PATH)"
+}
+
+# --- Sync project .grok/config.yaml → ~/.grok (full override of managed local config) ---
+
+sync_grok_config() {
+  if [ "$SKIP_GROK_CONFIG_SYNC" = 1 ]; then
+    log "skip grok config sync (--skip-grok-config-sync)"
+    return 0
+  fi
+  if [ -z "$BOOTSTRAP_ROOT" ] || [ ! -f "$BOOTSTRAP_ROOT/.grok/config.yaml" ]; then
+    warn "no project .grok/config.yaml (run install from herdr-bootstrap clone)"
+    return 0
+  fi
+  sync_bin="$BOOTSTRAP_ROOT/bin/sync-grok-config"
+  if [ ! -f "$sync_bin" ]; then
+    warn "missing bin/sync-grok-config"
+    return 0
+  fi
+  log "syncing project .grok/config.yaml → ~/.grok/config.yaml + config.toml"
+  if [ "$DRY_RUN" = 1 ]; then
+    python3 "$sync_bin" --dry-run || warn "sync-grok-config dry-run failed"
+    return 0
+  fi
+  python3 "$sync_bin" || warn "sync-grok-config failed"
+  # ensure project lsp.json is present (committed file)
+  if [ -f "$BOOTSTRAP_ROOT/.grok/lsp.json" ]; then
+    log "project LSP config: $BOOTSTRAP_ROOT/.grok/lsp.json"
+  fi
 }
 
 # --- Integrations ---
@@ -420,6 +707,47 @@ verify() {
   else
     printf '  MISS grok skill path\n'
   fi
+  if [ -f "$HOME/.agents/skills/docs-wiki/SKILL.md" ]; then
+    printf '  OK  docs-wiki skill\n'
+  else
+    printf '  MISS docs-wiki skill\n'
+  fi
+  if [ -f "$HOME/.grok/skills/docs-wiki/SKILL.md" ] || [ -L "$HOME/.grok/skills/docs-wiki" ]; then
+    printf '  OK  grok docs-wiki path\n'
+  else
+    printf '  MISS grok docs-wiki path\n'
+  fi
+  if command -v herdr-docs-wiki >/dev/null 2>&1 || command -v herdr-doctor >/dev/null 2>&1; then
+    printf '  OK  herdr-docs-wiki CLI\n'
+  else
+    printf '  MISS herdr-docs-wiki CLI (build plugin from clone)\n'
+  fi
+  if command -v rust-analyzer >/dev/null 2>&1; then
+    printf '  OK  rust-analyzer -> %s\n' "$(command -v rust-analyzer)"
+  else
+    printf '  MISS rust-analyzer (Rust LSP)\n'
+  fi
+  if command -v gopls >/dev/null 2>&1; then
+    printf '  OK  gopls -> %s\n' "$(command -v gopls)"
+  else
+    printf '  MISS gopls (Go LSP)\n'
+  fi
+  if [ -f "$HOME/.grok/config.toml" ] && grep -q 'lsp_tools\s*=\s*true' "$HOME/.grok/config.toml" 2>/dev/null; then
+    printf '  OK  ~/.grok/config.toml lsp_tools=true\n'
+  else
+    printf '  MISS ~/.grok lsp_tools (run bin/sync-grok-config)\n'
+  fi
+  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/.grok/lsp.json" ]; then
+    if grep -q '"rust"' "$BOOTSTRAP_ROOT/.grok/lsp.json" 2>/dev/null && \
+       grep -q '"go"' "$BOOTSTRAP_ROOT/.grok/lsp.json" 2>/dev/null; then
+      printf '  OK  project .grok/lsp.json (rust + go)\n'
+    else
+      printf '  MISS project .grok/lsp.json incomplete (need rust + go)\n'
+    fi
+  fi
+  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/.grok/config.yaml" ]; then
+    printf '  OK  project .grok/config.yaml (source of truth)\n'
+  fi
 
   if command -v herdr >/dev/null 2>&1; then
     herdr --version 2>/dev/null | sed 's/^/  /' || true
@@ -440,6 +768,10 @@ install_herdr
 install_grok
 install_skill
 link_skill_native_dirs
+install_docs_wiki_plugin
+install_rust_analyzer
+install_gopls
+sync_grok_config
 install_integrations
 verify
 
@@ -453,7 +785,11 @@ Next steps:
   3. From a normal terminal (not nested):  herdr
   4. Start your agent in a pane (e.g. grok)
   5. First-run walkthrough: https://herdr.dev/agent-guide.md
+  6. Project wiki: docs/ + skill docs-wiki; doctor: herdr-docs-wiki doctor
+  7. Grok config source of truth: .grok/config.yaml → bin/sync-grok-config
+  8. LSP: .grok/lsp.json (rust-analyzer + gopls) + lsp_tools in ~/.grok/config.toml
 
 Docs: https://herdr.dev/docs/  |  Plugins: https://herdr.dev/plugins/  |  Blog: https://herdr.dev/blog/
 Source: https://github.com/herdrdev/herdr
+Wiki rules: docs/ (see docs/index.md)  |  policy/llm-wiki.toml
 EOF
