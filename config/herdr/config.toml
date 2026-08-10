@@ -34,27 +34,33 @@ version_check = true
 manifest_check = true
 
 # --- Experimental (shared intentionally) ---
-# Kitty graphics: terminal image protocol for map-axi preview / image panes.
+# Kitty graphics: terminal image protocol for agent-browser snapshots / panes.
 # Requires a Kitty-graphics-capable outer terminal (Kitty, Ghostty, WezTerm, …).
-# Harmless when unsupported; map-axi still falls back to system open + path.
+# Harmless when unsupported; herdr-agent-browser falls back to Preview/system open.
 [experimental]
 kitty_graphics = true
 allow_nested = false
 pane_history = false
 
 # --- Managed keybindings (plugin actions) ---
-# Maps: open free satellite map UI (jewell.maps — link from herdr-plugins monorepo).
+# herdr-agent-browser (vercel-labs/agent-browser wrapper)
 [[keys.command]]
-key = "prefix+shift+m"
+key = "prefix+shift+b"
 type = "plugin_action"
-command = "jewell.maps.open"
-description = "open satellite maps (jewell.maps)"
+command = "jewell.herdr-agent-browser.open"
+description = "agent-browser open example.com"
 
 [[keys.command]]
 key = "prefix+shift+p"
 type = "plugin_action"
-command = "jewell.maps.preview"
-description = "maps preview (headless capture)"
+command = "jewell.herdr-agent-browser.snapshot"
+description = "agent-browser snapshot + show"
+
+[[keys.command]]
+key = "prefix+shift+w"
+type = "plugin_action"
+command = "jewell.herdr-agent-browser.watch"
+description = "agent-browser watch 2s snapshots"
 
 # Docs wiki doctor for current Herdr space
 [[keys.command]]

@@ -1,11 +1,16 @@
 #!/usr/bin/env sh
-# Herdr machine bootstrap — idempotent install/update of herdr, Node/npx, Grok,
-# agent skills (herdr, llm-wiki pattern, docs-wiki), agent-native skill symlinks
-# (#1874 / PR #1883), Grok integration hooks, global Herdr config sync, and plugins.
+# Herdr machine bootstrap — idempotent install/update of herdr, WezTerm (outer
+# terminal, Herdr-compatible), Node/npx, Grok, agent skills (herdr, llm-wiki,
+# docs-wiki), agent-native skill symlinks (#1874 / PR #1883), Grok integration
+# hooks, global Herdr + WezTerm config sync, and plugins.
 #
 # Usage:
-#   sh install.sh [--skip-node] [--skip-grok] [--skip-skills] [--skip-integrations] [--skip-plugin] [--skip-herdr-config-sync] [--dry-run]
+#   sh install.sh [--skip-node] [--skip-grok] [--skip-skills] [--skip-integrations] [--skip-plugin] [--skip-wezterm] [--skip-herdr-config-sync] [--skip-wezterm-config-sync] [--dry-run]
 #   # or: curl -fsSL <raw-url-of-this-repo>/install.sh | sh
+#
+# Plugins: clones/pulls https://github.com/tyler-jewell/herdr-plugins (all subdirs
+# with herdr-plugin.toml), builds each (Go/Rust), and `herdr plugin link`s them.
+# Override: HERDR_PLUGINS_ROOT, HERDR_PLUGINS_GIT_URL, HERDR_PLUGINS_REF.
 #
 # Safety:
 #   - never runs bare `herdr` (TUI attach)
@@ -23,9 +28,16 @@ SKIP_INTEGRATIONS=0
 SKIP_PLUGIN=0
 SKIP_RUST_ANALYZER=0
 SKIP_GOPLS=0
+SKIP_LUA_LS=0
 SKIP_GROK_CONFIG_SYNC=0
 SKIP_HERDR_CONFIG_SYNC=0
+SKIP_WEZTERM=0
+SKIP_WEZTERM_CONFIG_SYNC=0
 DRY_RUN=0
+
+# WezTerm release tag (stable). Override: WEZTERM_VERSION=...
+WEZTERM_VERSION="${WEZTERM_VERSION:-20240203-110809-5046fc22}"
+WEZTERM_GITHUB="https://github.com/wezterm/wezterm/releases/download"
 
 NODE_VERSION="${NODE_VERSION:-22.18.0}"
 HERDR_INSTALL_DIR="${HERDR_INSTALL_DIR:-$HOME/.local/bin}"
@@ -35,10 +47,15 @@ SHARE_HERDR="${SHARE_HERDR:-$HOME/.local/share/herdr}"
 APPLY_SKILLS_SYMLINK_WORKAROUND="${APPLY_SKILLS_SYMLINK_WORKAROUND:-1}"
 
 # Resolve repo root when install.sh is run from a clone (not curl|sh).
+# Handles: ./install.sh, sh install.sh, sh ./install.sh, /path/to/install.sh
+# curl|sh has no script file → BOOTSTRAP_ROOT stays empty (skip clone-only steps).
 BOOTSTRAP_ROOT=""
-case "$0" in
-  */*) BOOTSTRAP_ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)" ;;
-esac
+if [ -f "$0" ]; then
+  BOOTSTRAP_ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+  if [ ! -f "$BOOTSTRAP_ROOT/AGENTS.md" ]; then
+    BOOTSTRAP_ROOT=""
+  fi
+fi
 
 # shellcheck disable=SC2034
 for arg in "$@"; do
@@ -50,8 +67,11 @@ for arg in "$@"; do
     --skip-plugin) SKIP_PLUGIN=1 ;;
     --skip-rust-analyzer) SKIP_RUST_ANALYZER=1 ;;
     --skip-gopls) SKIP_GOPLS=1 ;;
+    --skip-lua-ls) SKIP_LUA_LS=1 ;;
     --skip-grok-config-sync) SKIP_GROK_CONFIG_SYNC=1 ;;
     --skip-herdr-config-sync) SKIP_HERDR_CONFIG_SYNC=1 ;;
+    --skip-wezterm) SKIP_WEZTERM=1 ;;
+    --skip-wezterm-config-sync) SKIP_WEZTERM_CONFIG_SYNC=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
       sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
@@ -64,13 +84,14 @@ for arg in "$@"; do
   esac
 done
 
-log()  { printf '==> %s\n' "$*"; }
+# Progress on stderr so $(fn) path-returns stay clean.
+log()  { printf '==> %s\n' "$*" >&2; }
 warn() { printf '!!  %s\n' "$*" >&2; }
 die()  { printf 'XX  %s\n' "$*" >&2; exit 1; }
 
 run() {
   if [ "$DRY_RUN" = 1 ]; then
-    printf '[dry-run] %s\n' "$*"
+    printf '[dry-run] %s\n' "$*" >&2
     return 0
   fi
   "$@"
@@ -300,7 +321,7 @@ install_skill() {
     fi
   fi
 
-  # Karpathy pattern skill (literacy); house docs-wiki is operational truth for docs/*
+  # Karpathy pattern skill (literacy); operational docs-wiki skill comes from herdr-plugins monorepo
   log "installing llm-wiki pattern skill (ar9av/obsidian-wiki --skill llm-wiki -g)"
   if [ "$DRY_RUN" = 1 ]; then
     log "[dry-run] would run: npx --yes skills add ar9av/obsidian-wiki --skill llm-wiki -g -y"
@@ -308,35 +329,7 @@ install_skill() {
     npx --yes skills add ar9av/obsidian-wiki --skill llm-wiki -g -y || \
       warn "llm-wiki skills add failed (non-fatal)"
   fi
-
-  install_docs_wiki_skill
-}
-
-install_docs_wiki_skill() {
-  # House skill: search/update per-repo docs/* (from this bootstrap tree when present)
-  src=""
-  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/skills/docs-wiki/SKILL.md" ]; then
-    src="$BOOTSTRAP_ROOT/skills/docs-wiki"
-  fi
-  dest="$HOME/.agents/skills/docs-wiki"
-  if [ -z "$src" ]; then
-    warn "docs-wiki skill source not found (run install from herdr-bootstrap clone)"
-    return 0
-  fi
-  log "installing house docs-wiki skill → $dest"
-  if [ "$DRY_RUN" = 1 ]; then
-    log "[dry-run] would copy $src → $dest"
-    return 0
-  fi
-  mkdir -p "$dest"
-  # copy tree (portable)
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete "$src/" "$dest/"
-  else
-    rm -rf "$dest"
-    mkdir -p "$dest"
-    cp -R "$src/." "$dest/"
-  fi
+  # docs-wiki skill: installed from herdr-plugins after monorepo pull (install_herdr_plugins)
 }
 
 # --- #1874 / PR #1883 workaround ---
@@ -414,98 +407,194 @@ link_skill_native_dirs() {
   fi
 }
 
-# --- Go plugin herdr-docs-wiki ---
+# --- Herdr plugins (public monorepo tyler-jewell/herdr-plugins) ---
+# Always clone/pull the monorepo, then build + link every plugin subdir.
 
-install_docs_wiki_plugin() {
-  if [ "$SKIP_PLUGIN" = 1 ]; then
-    log "skip docs-wiki plugin (--skip-plugin)"
-    return 0
-  fi
-  if [ -z "$BOOTSTRAP_ROOT" ] || [ ! -d "$BOOTSTRAP_ROOT/plugins/herdr-docs-wiki" ]; then
-    warn "plugin sources missing (run install from herdr-bootstrap clone)"
-    return 0
-  fi
-  if ! command -v go >/dev/null 2>&1; then
-    warn "go not on PATH; skip herdr-docs-wiki plugin build (install Go ≥1.22)"
-    return 0
-  fi
-  if ! command -v herdr >/dev/null 2>&1; then
-    warn "herdr not on PATH; skip plugin link"
-    return 0
+HERDR_PLUGINS_GIT_URL="${HERDR_PLUGINS_GIT_URL:-https://github.com/tyler-jewell/herdr-plugins.git}"
+HERDR_PLUGINS_REF="${HERDR_PLUGINS_REF:-main}"
+# Managed checkout when no override / sibling:
+HERDR_PLUGINS_CACHE="${HERDR_PLUGINS_CACHE:-$HOME/.local/share/herdr-bootstrap/herdr-plugins}"
+
+# ensure_herdr_plugins_repo → prints absolute path to monorepo checkout (or fails)
+ensure_herdr_plugins_repo() {
+  dest=""
+  if [ -n "${HERDR_PLUGINS_ROOT:-}" ]; then
+    dest="$HERDR_PLUGINS_ROOT"
+  elif [ -n "$BOOTSTRAP_ROOT" ] && [ -d "$BOOTSTRAP_ROOT/../herdr-plugins/.git" ]; then
+    dest="$(CDPATH= cd -- "$BOOTSTRAP_ROOT/../herdr-plugins" && pwd)"
+  elif [ -d "$HOME/herdr-plugins/.git" ]; then
+    dest="$HOME/herdr-plugins"
+  else
+    dest="$HERDR_PLUGINS_CACHE"
   fi
 
-  plug="$BOOTSTRAP_ROOT/plugins/herdr-docs-wiki"
-  log "building herdr-docs-wiki plugin"
   if [ "$DRY_RUN" = 1 ]; then
-    log "[dry-run] would go build + herdr plugin link $plug"
+    log "[dry-run] would ensure git clone/pull $HERDR_PLUGINS_GIT_URL → $dest (ref=$HERDR_PLUGINS_REF)"
+    printf '%s\n' "$dest"
     return 0
   fi
-  mkdir -p "$plug/bin"
-  (cd "$plug" && go build -o bin/herdr-docs-wiki ./cmd/herdr-docs-wiki) || {
-    warn "go build failed"
-    return 0
-  }
-  ln -sfn "$plug/bin/herdr-docs-wiki" "$LOCAL_BIN/herdr-docs-wiki"
-  ln -sfn "$plug/bin/herdr-docs-wiki" "$LOCAL_BIN/herdr-doctor"
-  # link plugin into Herdr (idempotent)
-  herdr plugin link "$plug" 2>/dev/null || \
-    herdr plugin link "$plug" --yes 2>/dev/null || \
-    warn "herdr plugin link failed (is server compatible? try: herdr plugin link $plug)"
 
-  # Keybindings for docs-wiki (and maps, kitty, …) live in versioned
-  # config/herdr/config.toml and are applied by sync_herdr_config.
-  install_code_gate_plugins
-  try_link_maps_plugin
-}
+  if ! command -v git >/dev/null 2>&1; then
+    warn "git not on PATH; cannot pull herdr-plugins monorepo"
+    if [ -d "$dest" ] && find "$dest" -maxdepth 2 -name herdr-plugin.toml 2>/dev/null | grep -q .; then
+      # use existing tree if any plugin manifests exist
+      if find "$dest" -maxdepth 2 -name herdr-plugin.toml 2>/dev/null | grep -q .; then
+        printf '%s\n' "$dest"
+        return 0
+      fi
+    fi
+    return 1
+  fi
 
-# Link jewell.maps from sibling herdr-plugins monorepo when present.
-try_link_maps_plugin() {
-  if [ "$SKIP_PLUGIN" = 1 ]; then
-    return 0
-  fi
-  if ! command -v herdr >/dev/null 2>&1; then
-    return 0
-  fi
-  maps=""
-  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/../herdr-plugins/maps/herdr-plugin.toml" ]; then
-    maps="$(CDPATH= cd -- "$BOOTSTRAP_ROOT/../herdr-plugins/maps" && pwd)"
-  elif [ -f "$HOME/herdr-plugins/maps/herdr-plugin.toml" ]; then
-    maps="$HOME/herdr-plugins/maps"
-  fi
-  if [ -z "$maps" ]; then
-    return 0
-  fi
-  log "linking maps plugin from $maps"
-  if [ "$DRY_RUN" = 1 ]; then
-    log "[dry-run] would: herdr plugin link $maps"
-    return 0
-  fi
-  if [ -x "$maps/target/release/map-axi" ] || command -v cargo >/dev/null 2>&1; then
-    if [ ! -x "$maps/target/release/map-axi" ] && command -v cargo >/dev/null 2>&1; then
-      (cd "$maps" && cargo build --release) || warn "maps cargo build failed"
+  if [ -d "$dest/.git" ]; then
+    log "updating herdr-plugins: $dest (fetch $HERDR_PLUGINS_REF)"
+    (
+      CDPATH= cd -- "$dest" || exit 1
+      git fetch --quiet origin 2>/dev/null || git fetch --quiet 2>/dev/null || true
+      # Prefer checkout/pull of configured ref; leave local dirty work alone with soft pull
+      if git show-ref --verify --quiet "refs/remotes/origin/$HERDR_PLUGINS_REF" 2>/dev/null; then
+        git checkout -q "$HERDR_PLUGINS_REF" 2>/dev/null || true
+        git pull --ff-only --quiet origin "$HERDR_PLUGINS_REF" 2>/dev/null || \
+          git pull --ff-only --quiet 2>/dev/null || \
+          warn "git pull herdr-plugins failed (using local tree)"
+      else
+        git pull --ff-only --quiet 2>/dev/null || warn "git pull herdr-plugins failed (using local tree)"
+      fi
+    ) || warn "herdr-plugins update had issues; continuing with $dest"
+  elif [ -d "$dest" ] && [ ! -d "$dest/.git" ]; then
+    warn "$dest exists but is not a git repo; using as-is (set HERDR_PLUGINS_ROOT to override)"
+  else
+    log "cloning herdr-plugins → $dest"
+    mkdir -p "$(dirname "$dest")"
+    if ! git clone --depth 1 --branch "$HERDR_PLUGINS_REF" \
+        "$HERDR_PLUGINS_GIT_URL" "$dest" 2>/dev/null; then
+      # branch may not exist on shallow; try default branch
+      git clone --depth 1 "$HERDR_PLUGINS_GIT_URL" "$dest" || {
+        warn "git clone herdr-plugins failed: $HERDR_PLUGINS_GIT_URL"
+        return 1
+      }
     fi
   fi
-  herdr plugin link "$maps" 2>/dev/null || \
-    herdr plugin link "$maps" --yes 2>/dev/null || \
-    warn "herdr plugin link maps failed"
+
+  if ! find "$dest" -maxdepth 2 -name herdr-plugin.toml 2>/dev/null | grep -q .; then
+    warn "no herdr-plugin.toml under $dest"
+    return 1
+  fi
+  printf '%s\n' "$dest"
 }
 
-# --- Per-language code gates (Rust / Go) ---
+link_plugin_dir() {
+  plug="$1"
+  [ -d "$plug" ] || return 1
+  herdr plugin link "$plug" 2>/dev/null || \
+    herdr plugin link "$plug" --yes 2>/dev/null || \
+    warn "herdr plugin link failed: $plug"
+}
 
-install_code_gate_plugins() {
+# Build one plugin directory (Go or Rust) from heuristics + common layouts.
+build_one_plugin() {
+  plug="$1"
+  name="$(basename "$plug")"
+  log "building plugin: $name ($plug)"
+
+  if [ -f "$plug/go.mod" ]; then
+    if ! command -v go >/dev/null 2>&1; then
+      warn "go not on PATH; skip Go plugin $name"
+      return 1
+    fi
+    mkdir -p "$plug/bin"
+    built=0
+    if [ -d "$plug/cmd" ]; then
+      for cmd_dir in "$plug/cmd"/*; do
+        [ -d "$cmd_dir" ] || continue
+        bin="$(basename "$cmd_dir")"
+        if (cd "$plug" && go build -o "bin/$bin" "./cmd/$bin"); then
+          ln -sfn "$plug/bin/$bin" "$LOCAL_BIN/$bin"
+          built=1
+          # Convenience alias for docs-wiki
+          if [ "$bin" = "herdr-docs-wiki" ]; then
+            ln -sfn "$plug/bin/$bin" "$LOCAL_BIN/herdr-doctor"
+          fi
+        else
+          warn "go build failed: $name / $bin"
+        fi
+      done
+    fi
+    if [ "$built" = 0 ]; then
+      # single-package main at root
+      if [ -f "$plug/main.go" ]; then
+        if (cd "$plug" && go build -o "bin/$name" .); then
+          ln -sfn "$plug/bin/$name" "$LOCAL_BIN/$name"
+          built=1
+        fi
+      fi
+    fi
+    [ "$built" = 1 ] || return 1
+    return 0
+  fi
+
+  if [ -f "$plug/Cargo.toml" ]; then
+    if ! command -v cargo >/dev/null 2>&1; then
+      warn "cargo not on PATH; skip Rust plugin $name"
+      return 1
+    fi
+    (cd "$plug" && cargo build --release) || {
+      warn "cargo build --release failed: $name"
+      return 1
+    }
+    # Symlink release binaries that look like CLIs
+    if [ -d "$plug/target/release" ]; then
+      for bin in "$plug/target/release"/*; do
+        [ -f "$bin" ] && [ -x "$bin" ] || continue
+        b="$(basename "$bin")"
+        case "$b" in
+          *.d|*.rlib|*.so|*.dylib|*.a) continue ;;
+          build|deps|examples|incremental|native) continue ;;
+        esac
+        # skip if looks like a directory leaked
+        [ -d "$bin" ] && continue
+        ln -sfn "$bin" "$LOCAL_BIN/$b" 2>/dev/null || true
+      done
+    fi
+    return 0
+  fi
+
+  # Manifest-only / script plugin — still linkable if commands exist
+  log "no go.mod/Cargo.toml in $name; linking as-is (manifest commands must work)"
+  return 0
+}
+
+install_herdr_plugins() {
   if [ "$SKIP_PLUGIN" = 1 ]; then
+    log "skip plugins (--skip-plugin)"
     return 0
   fi
-  if [ -z "$BOOTSTRAP_ROOT" ]; then
-    return 0
-  fi
-  if ! command -v go >/dev/null 2>&1 || ! command -v herdr >/dev/null 2>&1; then
-    warn "go/herdr missing; skip code-gate plugins"
+  if ! command -v herdr >/dev/null 2>&1; then
+    warn "herdr not on PATH; skip plugins"
     return 0
   fi
 
-  # staticcheck for Go gate
-  if ! command -v staticcheck >/dev/null 2>&1; then
+  plugins_root=""
+  if ! plugins_root="$(ensure_herdr_plugins_repo)"; then
+    warn "could not obtain herdr-plugins monorepo from $HERDR_PLUGINS_GIT_URL"
+    return 0
+  fi
+  log "herdr-plugins monorepo: $plugins_root"
+
+  # Pin wiki policy for docs-wiki
+  if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/policy/llm-wiki.toml" ]; then
+    if [ "$DRY_RUN" = 0 ]; then
+      mkdir -p "$HOME/.config/herdr-bootstrap"
+      cp -f "$BOOTSTRAP_ROOT/policy/llm-wiki.toml" "$HOME/.config/herdr-bootstrap/llm-wiki.toml"
+      log "pinned wiki policy → ~/.config/herdr-bootstrap/llm-wiki.toml"
+    fi
+  fi
+
+  # Agent skills shipped with the monorepo (not in herdr-bootstrap)
+  install_skills_from_monorepo "$plugins_root"
+
+  # staticcheck for Go code gate
+  if command -v go >/dev/null 2>&1 && ! command -v staticcheck >/dev/null 2>&1; then
     log "installing staticcheck (Go code gate)"
     if [ "$DRY_RUN" = 0 ]; then
       mkdir -p "$LOCAL_BIN"
@@ -514,38 +603,89 @@ install_code_gate_plugins() {
     fi
   fi
 
-  for name in herdr-code-gate-rust herdr-code-gate-go; do
-    plug="$BOOTSTRAP_ROOT/plugins/$name"
-    if [ ! -d "$plug" ]; then
-      warn "missing $plug"
-      continue
-    fi
-    log "building $name"
+  # Discover every first-level subdir with herdr-plugin.toml and install all
+  count=0
+  linked=0
+  for toml in "$plugins_root"/*/herdr-plugin.toml; do
+    [ -f "$toml" ] || continue
+    plug="$(CDPATH= cd -- "$(dirname "$toml")" && pwd)"
+    count=$((count + 1))
     if [ "$DRY_RUN" = 1 ]; then
-      log "[dry-run] would build/link $name"
+      log "[dry-run] would build + herdr plugin link $plug"
       continue
     fi
-    mkdir -p "$plug/bin"
-    (cd "$plug" && go build -o "bin/$name" "./cmd/$name") || {
-      warn "go build $name failed"
+    if build_one_plugin "$plug"; then
+      if link_plugin_dir "$plug"; then
+        linked=$((linked + 1))
+      fi
+    else
+      # still try link if binaries already present from prior build
+      link_plugin_dir "$plug" || true
+    fi
+  done
+
+  if [ "$count" = 0 ]; then
+    warn "no plugins found under $plugins_root/*/herdr-plugin.toml"
+  else
+    log "herdr-plugins: processed $count plugin(s) (linked/attempted from $plugins_root)"
+  fi
+
+  # Re-link native skill dirs after monorepo skills land (docs-wiki, …)
+  if [ "$SKIP_SKILLS" != 1 ]; then
+    link_skill_native_dirs
+  fi
+
+  # Keybindings for docs-wiki / herdr-agent-browser live in config/herdr/config.toml (sync_herdr_config).
+}
+
+# Install agent skills from monorepo skills/<name>/SKILL.md → ~/.agents/skills/<name>
+install_skills_from_monorepo() {
+  plugins_root="$1"
+  skills_dir="$plugins_root/skills"
+  if [ ! -d "$skills_dir" ]; then
+    log "no skills/ tree in monorepo (ok if none shipped yet)"
+    return 0
+  fi
+  if [ "$SKIP_SKILLS" = 1 ]; then
+    log "skip monorepo skills (--skip-skills)"
+    return 0
+  fi
+  for skill_src in "$skills_dir"/*; do
+    [ -d "$skill_src" ] || continue
+    [ -f "$skill_src/SKILL.md" ] || continue
+    name="$(basename "$skill_src")"
+    dest="$HOME/.agents/skills/$name"
+    log "installing monorepo skill $name → $dest"
+    if [ "$DRY_RUN" = 1 ]; then
+      log "[dry-run] would copy $skill_src → $dest"
       continue
-    }
-    ln -sfn "$plug/bin/$name" "$LOCAL_BIN/$name"
-    herdr plugin link "$plug" 2>/dev/null || \
-      herdr plugin link "$plug" --yes 2>/dev/null || \
-      warn "herdr plugin link $name failed"
+    fi
+    mkdir -p "$dest"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "$skill_src/" "$dest/"
+    else
+      rm -rf "$dest"
+      mkdir -p "$dest"
+      cp -R "$skill_src/." "$dest/"
+    fi
   done
 }
 
 # --- rust-analyzer (Grok Rust LSP) ---
+
+# True if rust-analyzer on PATH actually runs (cargo/bin/rust-analyzer → rustup stub can fail).
+rust_analyzer_ok() {
+  command -v rust-analyzer >/dev/null 2>&1 || return 1
+  rust-analyzer --version >/dev/null 2>&1
+}
 
 install_rust_analyzer() {
   if [ "$SKIP_RUST_ANALYZER" = 1 ]; then
     log "skip rust-analyzer (--skip-rust-analyzer)"
     return 0
   fi
-  if command -v rust-analyzer >/dev/null 2>&1; then
-    log "rust-analyzer present: $(command -v rust-analyzer)"
+  if rust_analyzer_ok; then
+    log "rust-analyzer present: $(command -v rust-analyzer) ($(rust-analyzer --version 2>/dev/null | head -1))"
     return 0
   fi
   log "installing rust-analyzer"
@@ -553,15 +693,24 @@ install_rust_analyzer() {
     log "[dry-run] would install rust-analyzer"
     return 0
   fi
+  mkdir -p "$LOCAL_BIN"
   if command -v rustup >/dev/null 2>&1; then
     rustup component add rust-analyzer || warn "rustup component add rust-analyzer failed"
-    if command -v rust-analyzer >/dev/null 2>&1; then
-      return 0
+    # rustup's ~/.cargo/bin/rust-analyzer is a proxy; link the real toolchain binary into LOCAL_BIN
+    # so PATH ($LOCAL_BIN first) always hits a working binary.
+    ra_real="$(rustup which rust-analyzer 2>/dev/null || true)"
+    if [ -n "$ra_real" ] && [ -x "$ra_real" ]; then
+      ln -sfn "$ra_real" "$LOCAL_BIN/rust-analyzer"
+      export PATH="$LOCAL_BIN:$PATH"
+      if rust_analyzer_ok; then
+        log "rust-analyzer linked: $LOCAL_BIN/rust-analyzer → $ra_real"
+        return 0
+      fi
     fi
   fi
   if command -v brew >/dev/null 2>&1; then
     brew install rust-analyzer || warn "brew install rust-analyzer failed"
-    if command -v rust-analyzer >/dev/null 2>&1; then
+    if rust_analyzer_ok; then
       return 0
     fi
   fi
@@ -581,9 +730,7 @@ install_rust_analyzer() {
   url="https://github.com/rust-lang/rust-analyzer/releases/latest/download/$asset"
   tmp="$(mktemp)"
   if curl -fsSL "$url" -o "$tmp"; then
-    mkdir -p "$LOCAL_BIN"
     gunzip -c "$tmp" >"$LOCAL_BIN/rust-analyzer" || {
-      # some releases may already be uncompressed naming
       warn "gunzip failed; trying raw copy"
       cp "$tmp" "$LOCAL_BIN/rust-analyzer" 2>/dev/null || true
     }
@@ -594,7 +741,8 @@ install_rust_analyzer() {
     warn "download rust-analyzer failed: $url"
     rm -f "$tmp"
   fi
-  command -v rust-analyzer >/dev/null 2>&1 || warn "rust-analyzer still not on PATH"
+  export PATH="$LOCAL_BIN:$PATH"
+  rust_analyzer_ok || warn "rust-analyzer still not working on PATH"
 }
 
 # --- gopls (Grok Go LSP) ---
@@ -625,6 +773,99 @@ install_gopls() {
     warn "go install gopls failed"
   fi
   command -v gopls >/dev/null 2>&1 || warn "gopls still not on PATH (ensure $LOCAL_BIN is on PATH)"
+}
+
+# --- lua-language-server (Grok Lua LSP / WezTerm config) ---
+
+install_lua_language_server() {
+  if [ "$SKIP_LUA_LS" = 1 ]; then
+    log "skip lua-language-server (--skip-lua-ls)"
+    return 0
+  fi
+  if command -v lua-language-server >/dev/null 2>&1; then
+    log "lua-language-server present: $(command -v lua-language-server)"
+    return 0
+  fi
+  log "installing lua-language-server (LuaLS)"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would install lua-language-server"
+    return 0
+  fi
+
+  # Prefer brew when available
+  if command -v brew >/dev/null 2>&1; then
+    brew install lua-language-server || warn "brew install lua-language-server failed"
+    if command -v lua-language-server >/dev/null 2>&1; then
+      log "lua-language-server via brew: $(command -v lua-language-server)"
+      return 0
+    fi
+  fi
+
+  arch="$(uname -m)"
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$os-$arch" in
+    darwin-arm64|darwin-aarch64) asset_triple="darwin-arm64" ;;
+    darwin-x86_64) asset_triple="darwin-x64" ;;
+    linux-x86_64|linux-amd64) asset_triple="linux-x64" ;;
+    linux-arm64|linux-aarch64) asset_triple="linux-arm64" ;;
+    *)
+      warn "no portable lua-language-server asset for $os-$arch; install from https://github.com/LuaLS/lua-language-server/releases"
+      return 0
+      ;;
+  esac
+
+  # Pin via LUALS_VERSION or resolve latest tag from GitHub API
+  ver="${LUALS_VERSION:-}"
+  if [ -z "$ver" ]; then
+    ver="$(curl -fsSL https://api.github.com/repos/LuaLS/lua-language-server/releases/latest \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)"
+  fi
+  if [ -z "$ver" ]; then
+    ver="3.19.0"
+    warn "could not resolve latest lua-language-server; falling back to $ver"
+  fi
+  # tag may be "3.19.0" without v
+  ver="${ver#v}"
+
+  asset="lua-language-server-${ver}-${asset_triple}.tar.gz"
+  url="https://github.com/LuaLS/lua-language-server/releases/download/${ver}/${asset}"
+  share="${SHARE_LUALS:-$HOME/.local/share/lua-language-server}"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/luals.XXXXXX")"
+
+  log "downloading $asset"
+  if ! curl -fsSL "$url" -o "$tmp/$asset"; then
+    rm -rf "$tmp"
+    warn "download lua-language-server failed: $url"
+    return 0
+  fi
+  mkdir -p "$share"
+  # Replace previous portable tree
+  rm -rf "$share/bin" "$share/locale" "$share/meta" "$share/script" 2>/dev/null || true
+  # Extract (tarball roots at bin/, locale/, …)
+  tar -xzf "$tmp/$asset" -C "$share" || {
+    rm -rf "$tmp"
+    warn "extract lua-language-server failed"
+    return 0
+  }
+  rm -rf "$tmp"
+
+  if [ ! -x "$share/bin/lua-language-server" ]; then
+    warn "lua-language-server binary missing after extract ($share/bin)"
+    return 0
+  fi
+
+  # Wrapper: the real binary resolves assets relative to its install tree;
+  # a bare symlink from ~/.local/bin can break that on some platforms.
+  mkdir -p "$LOCAL_BIN"
+  cat >"$LOCAL_BIN/lua-language-server" <<EOF
+#!/usr/bin/env sh
+set -eu
+exec "$share/bin/lua-language-server" "\$@"
+EOF
+  chmod +x "$LOCAL_BIN/lua-language-server"
+  export PATH="$LOCAL_BIN:$PATH"
+  log "installed $LOCAL_BIN/lua-language-server → $share (v$ver)"
+  command -v lua-language-server >/dev/null 2>&1 || warn "lua-language-server still not on PATH"
 }
 
 # --- Sync project .grok/config.yaml → ~/.grok (full override of managed local config) ---
@@ -677,6 +918,295 @@ sync_herdr_config() {
     return 0
   fi
   python3 "$sync_bin" || warn "sync-herdr-config failed"
+}
+
+# --- WezTerm (outer terminal for Herdr) ---
+
+# Ensure macOS WezTerm.app CLI tools are on PATH when installed as an app bundle.
+ensure_wezterm_path() {
+  if command -v wezterm >/dev/null 2>&1; then
+    return 0
+  fi
+  for app in \
+    "$HOME/Applications/WezTerm.app" \
+    "/Applications/WezTerm.app"
+  do
+    if [ -x "$app/Contents/MacOS/wezterm" ]; then
+      ln -sfn "$app/Contents/MacOS/wezterm" "$LOCAL_BIN/wezterm"
+      if [ -x "$app/Contents/MacOS/wezterm-gui" ]; then
+        ln -sfn "$app/Contents/MacOS/wezterm-gui" "$LOCAL_BIN/wezterm-gui"
+      fi
+      export PATH="$LOCAL_BIN:$PATH"
+      log "linked wezterm CLI from $app → $LOCAL_BIN"
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_wezterm_macos_portable() {
+  # User-local app (no sudo). Prefer ~/Applications.
+  apps_dir="$HOME/Applications"
+  zip_name="WezTerm-macos-${WEZTERM_VERSION}.zip"
+  url="${WEZTERM_GITHUB}/${WEZTERM_VERSION}/${zip_name}"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/wezterm-mac.XXXXXX")"
+  log "downloading WezTerm macOS ${WEZTERM_VERSION}"
+  if ! curl -fsSL "$url" -o "$tmp/$zip_name"; then
+    rm -rf "$tmp"
+    warn "WezTerm macOS download failed: $url"
+    return 1
+  fi
+  if ! command -v unzip >/dev/null 2>&1; then
+    rm -rf "$tmp"
+    warn "unzip not found; cannot extract WezTerm.app"
+    return 1
+  fi
+  unzip -q "$tmp/$zip_name" -d "$tmp/extract" || {
+    rm -rf "$tmp"
+    warn "WezTerm zip extract failed"
+    return 1
+  }
+  # Zip layout: WezTerm.app at top or under a versioned dir
+  app_src="$(find "$tmp/extract" -maxdepth 3 -name 'WezTerm.app' -type d 2>/dev/null | head -n1)"
+  if [ -z "$app_src" ] || [ ! -d "$app_src" ]; then
+    rm -rf "$tmp"
+    warn "WezTerm.app not found inside zip"
+    return 1
+  fi
+  mkdir -p "$apps_dir"
+  # Replace previous portable install atomically-ish
+  rm -rf "$apps_dir/WezTerm.app"
+  mv "$app_src" "$apps_dir/WezTerm.app"
+  rm -rf "$tmp"
+  # Clear quarantine when possible (first-open Gatekeeper friction)
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -dr com.apple.quarantine "$apps_dir/WezTerm.app" 2>/dev/null || true
+  fi
+  ensure_wezterm_path || true
+  log "installed $apps_dir/WezTerm.app"
+  return 0
+}
+
+install_wezterm_linux_appimage() {
+  # x86_64 AppImage (stable). No sudo.
+  img_name="WezTerm-${WEZTERM_VERSION}-Ubuntu20.04.AppImage"
+  url="${WEZTERM_GITHUB}/${WEZTERM_VERSION}/${img_name}"
+  dest="$LOCAL_BIN/wezterm"
+  share="$HOME/.local/share/wezterm"
+  mkdir -p "$LOCAL_BIN" "$share"
+  log "downloading WezTerm AppImage ${WEZTERM_VERSION}"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/wezterm-appimage.XXXXXX")"
+  if ! curl -fsSL "$url" -o "$tmp"; then
+    rm -f "$tmp"
+    warn "WezTerm AppImage download failed: $url"
+    return 1
+  fi
+  chmod +x "$tmp"
+  mv "$tmp" "$share/WezTerm.AppImage"
+  # Wrapper so FUSE-less hosts still run (APPIMAGE_EXTRACT_AND_RUN)
+  cat >"$dest" <<'WRAP'
+#!/usr/bin/env sh
+set -eu
+APPIMAGE="${HERDR_WEZTERM_APPIMAGE:-$HOME/.local/share/wezterm/WezTerm.AppImage}"
+if [ ! -x "$APPIMAGE" ]; then
+  echo "wezterm AppImage missing: $APPIMAGE" >&2
+  exit 127
+fi
+export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
+exec "$APPIMAGE" "$@"
+WRAP
+  chmod +x "$dest"
+  log "installed AppImage → $share/WezTerm.AppImage (CLI $dest)"
+  return 0
+}
+
+install_wezterm_linux_deb_extract() {
+  # Extract .deb payload without root (aarch64 and x86_64 fallback).
+  case "$ARCH" in
+    arm64|aarch64)
+      deb_name="wezterm-${WEZTERM_VERSION}.Ubuntu22.04.arm64.deb"
+      ;;
+    x86_64|amd64)
+      deb_name="wezterm-${WEZTERM_VERSION}.Ubuntu22.04.deb"
+      ;;
+    *)
+      warn "no portable WezTerm .deb for arch $ARCH"
+      return 1
+      ;;
+  esac
+  url="${WEZTERM_GITHUB}/${WEZTERM_VERSION}/${deb_name}"
+  share="$HOME/.local/share/wezterm"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/wezterm-deb.XXXXXX")"
+  log "downloading WezTerm .deb ${deb_name} (extract, no sudo)"
+  if ! curl -fsSL "$url" -o "$tmp/wezterm.deb"; then
+    rm -rf "$tmp"
+    warn "WezTerm .deb download failed: $url"
+    return 1
+  fi
+  (
+    cd "$tmp" || exit 1
+    if command -v ar >/dev/null 2>&1; then
+      ar x wezterm.deb
+    elif command -v bsdtar >/dev/null 2>&1; then
+      bsdtar -xf wezterm.deb
+    else
+      warn "need ar or bsdtar to extract .deb"
+      exit 1
+    fi
+    data="$(ls data.tar.* 2>/dev/null | head -n1)"
+    [ -n "$data" ] || { warn "no data.tar in deb"; exit 1; }
+    mkdir -p root
+    case "$data" in
+      *.xz) tar -xJf "$data" -C root ;;
+      *.gz) tar -xzf "$data" -C root ;;
+      *.zst)
+        if command -v zstd >/dev/null 2>&1; then
+          zstd -d "$data" -o data.tar && tar -xf data.tar -C root
+        else
+          warn "zstd required to extract $data"
+          exit 1
+        fi
+        ;;
+      *) tar -xf "$data" -C root ;;
+    esac
+  ) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  bin_src="$tmp/root/usr/bin"
+  if [ ! -x "$bin_src/wezterm" ]; then
+    # some packages use libexec layout
+    bin_src="$(find "$tmp/root" -type f -name wezterm 2>/dev/null | head -n1)"
+    bin_src="$(dirname "${bin_src:-}")"
+  fi
+  if [ ! -x "$bin_src/wezterm" ]; then
+    rm -rf "$tmp"
+    warn "wezterm binary not found inside deb"
+    return 1
+  fi
+  mkdir -p "$share/bin"
+  # Copy tree of usr so shared libs next to bin stay relative if any
+  if [ -d "$tmp/root/usr" ]; then
+    rm -rf "$share/usr"
+    cp -R "$tmp/root/usr" "$share/usr"
+    ln -sfn "$share/usr/bin/wezterm" "$LOCAL_BIN/wezterm"
+    [ -x "$share/usr/bin/wezterm-gui" ] && ln -sfn "$share/usr/bin/wezterm-gui" "$LOCAL_BIN/wezterm-gui"
+  else
+    cp -f "$bin_src/wezterm" "$share/bin/wezterm"
+    chmod +x "$share/bin/wezterm"
+    ln -sfn "$share/bin/wezterm" "$LOCAL_BIN/wezterm"
+  fi
+  rm -rf "$tmp"
+  # Desktop entry for GUI launchers
+  apps="$HOME/.local/share/applications"
+  mkdir -p "$apps"
+  cat >"$apps/org.wezfurlong.wezterm.desktop" <<EOF
+[Desktop Entry]
+Name=WezTerm
+Comment=Wez's Terminal Emulator (herdr-bootstrap)
+Exec=$LOCAL_BIN/wezterm
+Icon=org.wezfurlong.wezterm
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+EOF
+  log "installed WezTerm from deb extract → $share"
+  return 0
+}
+
+install_wezterm_binary() {
+  if command -v wezterm >/dev/null 2>&1; then
+    log "wezterm present: $(wezterm --version 2>/dev/null || command -v wezterm)"
+    return 0
+  fi
+  ensure_wezterm_path && command -v wezterm >/dev/null 2>&1 && {
+    log "wezterm present after app link: $(wezterm --version 2>/dev/null || true)"
+    return 0
+  }
+
+  # Package managers (user-local brew preferred)
+  if command -v brew >/dev/null 2>&1; then
+    log "installing WezTerm via Homebrew"
+    if [ "$DRY_RUN" = 1 ]; then
+      log "[dry-run] would: brew install wezterm (cask/formula)"
+      return 0
+    fi
+    if [ "$OS" = "darwin" ]; then
+      brew install --cask wezterm || warn "brew cask wezterm failed"
+    else
+      # Linuxbrew: fully-qualified tap/formula (core cask is macOS-only)
+      brew tap wezterm/wezterm-linuxbrew 2>/dev/null || true
+      brew install wezterm/wezterm-linuxbrew/wezterm || warn "brew wezterm (linux) failed"
+    fi
+    ensure_wezterm_path || true
+    export PATH="$LOCAL_BIN:$PATH"
+    if command -v wezterm >/dev/null 2>&1; then
+      log "wezterm installed via brew: $(wezterm --version 2>/dev/null || true)"
+      return 0
+    fi
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would download portable WezTerm for $OS/$ARCH"
+    return 0
+  fi
+
+  log "installing portable WezTerm (no sudo) for $OS/$ARCH"
+  if [ "$OS" = "darwin" ]; then
+    install_wezterm_macos_portable || warn "portable macOS WezTerm install failed"
+  else
+    # Prefer AppImage on x86_64; deb-extract on aarch64 (or AppImage fallback fails).
+    case "$ARCH" in
+      x86_64|amd64)
+        install_wezterm_linux_appimage || install_wezterm_linux_deb_extract || \
+          warn "portable Linux WezTerm install failed"
+        ;;
+      arm64|aarch64)
+        install_wezterm_linux_deb_extract || warn "portable Linux aarch64 WezTerm install failed"
+        ;;
+      *)
+        warn "unsupported arch for portable WezTerm: $ARCH — install from https://wezterm.org/"
+        ;;
+    esac
+  fi
+
+  export PATH="$LOCAL_BIN:$PATH"
+  if command -v wezterm >/dev/null 2>&1; then
+    log "wezterm ready: $(wezterm --version 2>/dev/null || command -v wezterm)"
+  else
+    warn "wezterm not on PATH after install — see https://wezterm.org/  config will still sync"
+  fi
+}
+
+sync_wezterm_config() {
+  if [ "$SKIP_WEZTERM_CONFIG_SYNC" = 1 ]; then
+    log "skip wezterm config sync (--skip-wezterm-config-sync)"
+    return 0
+  fi
+  if [ -z "$BOOTSTRAP_ROOT" ] || [ ! -f "$BOOTSTRAP_ROOT/config/wezterm/wezterm.lua" ]; then
+    warn "no config/wezterm/wezterm.lua (run install from herdr-bootstrap clone)"
+    return 0
+  fi
+  sync_bin="$BOOTSTRAP_ROOT/bin/sync-wezterm-config"
+  if [ ! -f "$sync_bin" ]; then
+    warn "missing bin/sync-wezterm-config"
+    return 0
+  fi
+  log "syncing config/wezterm → ~/.config/wezterm (Herdr-compatible outer terminal)"
+  if [ "$DRY_RUN" = 1 ]; then
+    python3 "$sync_bin" --dry-run || warn "sync-wezterm-config dry-run failed"
+    return 0
+  fi
+  python3 "$sync_bin" || warn "sync-wezterm-config failed"
+}
+
+install_wezterm() {
+  if [ "$SKIP_WEZTERM" = 1 ]; then
+    log "skip wezterm (--skip-wezterm)"
+    return 0
+  fi
+  install_wezterm_binary
+  sync_wezterm_config
 }
 
 # --- Integrations ---
@@ -763,27 +1293,48 @@ verify() {
   else
     printf '  MISS herdr-docs-wiki CLI (build plugin from clone)\n'
   fi
-  if command -v rust-analyzer >/dev/null 2>&1; then
-    printf '  OK  rust-analyzer -> %s\n' "$(command -v rust-analyzer)"
+  # LSP triad: must be present, runnable, and wired for Grok
+  if rust_analyzer_ok; then
+    printf '  OK  rust-analyzer -> %s (%s)\n' "$(command -v rust-analyzer)" "$(rust-analyzer --version 2>/dev/null | head -1)"
   else
-    printf '  MISS rust-analyzer (Rust LSP)\n'
+    printf '  MISS rust-analyzer (Rust LSP — install/fix broken binary)\n'
+    ok=0
   fi
-  if command -v gopls >/dev/null 2>&1; then
+  if command -v gopls >/dev/null 2>&1 && gopls version >/dev/null 2>&1; then
     printf '  OK  gopls -> %s\n' "$(command -v gopls)"
   else
     printf '  MISS gopls (Go LSP)\n'
+    ok=0
+  fi
+  if command -v lua-language-server >/dev/null 2>&1 && lua-language-server --version >/dev/null 2>&1; then
+    printf '  OK  lua-language-server -> %s\n' "$(command -v lua-language-server)"
+  else
+    printf '  MISS lua-language-server (Lua LSP)\n'
+    ok=0
   fi
   if [ -f "$HOME/.grok/config.toml" ] && grep -q 'lsp_tools\s*=\s*true' "$HOME/.grok/config.toml" 2>/dev/null; then
     printf '  OK  ~/.grok/config.toml lsp_tools=true\n'
   else
     printf '  MISS ~/.grok lsp_tools (run bin/sync-grok-config)\n'
+    ok=0
+  fi
+  if [ -f "$HOME/.grok/lsp.json" ] && \
+     grep -q '"rust"' "$HOME/.grok/lsp.json" 2>/dev/null && \
+     grep -q '"go"' "$HOME/.grok/lsp.json" 2>/dev/null && \
+     grep -q '"lua"' "$HOME/.grok/lsp.json" 2>/dev/null; then
+    printf '  OK  ~/.grok/lsp.json (rust + go + lua)\n'
+  else
+    printf '  MISS ~/.grok/lsp.json incomplete (sync project .grok/lsp.json)\n'
+    ok=0
   fi
   if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/.grok/lsp.json" ]; then
     if grep -q '"rust"' "$BOOTSTRAP_ROOT/.grok/lsp.json" 2>/dev/null && \
-       grep -q '"go"' "$BOOTSTRAP_ROOT/.grok/lsp.json" 2>/dev/null; then
-      printf '  OK  project .grok/lsp.json (rust + go)\n'
+       grep -q '"go"' "$BOOTSTRAP_ROOT/.grok/lsp.json" 2>/dev/null && \
+       grep -q '"lua"' "$BOOTSTRAP_ROOT/.grok/lsp.json" 2>/dev/null; then
+      printf '  OK  project .grok/lsp.json (rust + go + lua)\n'
     else
-      printf '  MISS project .grok/lsp.json incomplete (need rust + go)\n'
+      printf '  MISS project .grok/lsp.json incomplete (need rust + go + lua)\n'
+      ok=0
     fi
   fi
   if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/.grok/config.yaml" ]; then
@@ -791,6 +1342,8 @@ verify() {
   fi
   if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/config/herdr/config.toml" ]; then
     printf '  OK  project config/herdr/config.toml (Herdr global source of truth)\n'
+  elif [ -z "$BOOTSTRAP_ROOT" ]; then
+    printf '  SKIP project config/herdr (no clone root; curl|sh or non-repo invoke)\n'
   else
     printf '  MISS project config/herdr/config.toml\n'
     ok=0
@@ -802,10 +1355,33 @@ verify() {
     printf '  MISS ~/.config/herdr kitty_graphics (run bin/sync-herdr-config)\n'
   fi
   if [ -f "$HOME/.config/herdr/config.toml" ] && \
-     grep -q 'jewell.maps' "$HOME/.config/herdr/config.toml" 2>/dev/null; then
-    printf '  OK  ~/.config/herdr/config.toml maps keybindings\n'
+     grep -q 'jewell.herdr-agent-browser' "$HOME/.config/herdr/config.toml" 2>/dev/null; then
+    printf '  OK  ~/.config/herdr/config.toml herdr-agent-browser keybindings\n'
   else
-    printf '  MISS herdr maps keybindings in global config\n'
+    printf '  MISS herdr-agent-browser keybindings in global config\n'
+  fi
+  if [ "$SKIP_WEZTERM" = 1 ]; then
+    printf '  SKIP wezterm (--skip-wezterm)\n'
+  else
+    if command -v wezterm >/dev/null 2>&1; then
+      printf '  OK  wezterm -> %s\n' "$(command -v wezterm)"
+      wezterm --version 2>/dev/null | sed 's/^/       /' || true
+    else
+      printf '  MISS wezterm (outer terminal; install or re-run without --skip-wezterm)\n'
+    fi
+    if [ -f "$HOME/.config/wezterm/wezterm.lua" ] && \
+       grep -q 'enable_kitty_keyboard' "$HOME/.config/wezterm/wezterm.lua" 2>/dev/null; then
+      printf '  OK  ~/.config/wezterm/wezterm.lua (kitty keyboard for Herdr/agents)\n'
+    else
+      printf '  MISS ~/.config/wezterm (run bin/sync-wezterm-config)\n'
+    fi
+    if [ -n "$BOOTSTRAP_ROOT" ] && [ -f "$BOOTSTRAP_ROOT/config/wezterm/wezterm.lua" ]; then
+      printf '  OK  project config/wezterm/wezterm.lua (source of truth)\n'
+    elif [ -z "$BOOTSTRAP_ROOT" ]; then
+      printf '  SKIP project config/wezterm (no clone root)\n'
+    else
+      printf '  MISS project config/wezterm/wezterm.lua\n'
+    fi
   fi
 
   if command -v herdr >/dev/null 2>&1; then
@@ -824,12 +1400,14 @@ verify() {
 
 install_node
 install_herdr
+install_wezterm
 install_grok
 install_skill
 link_skill_native_dirs
-install_docs_wiki_plugin
+install_herdr_plugins
 install_rust_analyzer
 install_gopls
+install_lua_language_server
 sync_grok_config
 sync_herdr_config
 install_integrations
@@ -841,14 +1419,16 @@ Bootstrap complete.
 
 Next steps:
   1. Open a new terminal (or: source ~/.zshrc)
-  2. If needed: grok login
-  3. From a normal terminal (not nested):  herdr
-  4. Start your agent in a pane (e.g. grok)
-  5. First-run walkthrough: https://herdr.dev/agent-guide.md
-  6. Project wiki: docs/ + skill docs-wiki; doctor: herdr-docs-wiki doctor
-  7. Grok config source of truth: .grok/config.yaml → bin/sync-grok-config
-  8. Herdr global config source of truth: config/herdr/config.toml → bin/sync-herdr-config
-  9. LSP: .grok/lsp.json (rust-analyzer + gopls) + lsp_tools in ~/.grok/config.toml
+  2. Prefer WezTerm as the outer terminal (Herdr-compatible config in ~/.config/wezterm)
+  3. If needed: grok login
+  4. From WezTerm (not nested inside Herdr):  herdr
+  5. Start your agent in a pane (e.g. grok)
+  6. First-run walkthrough: https://herdr.dev/agent-guide.md
+  7. Project wiki: docs/ + skill docs-wiki; doctor: herdr-docs-wiki doctor
+  8. Grok config source of truth: .grok/config.yaml → bin/sync-grok-config
+  9. Herdr global config: config/herdr/config.toml → bin/sync-herdr-config
+ 10. WezTerm config: config/wezterm/wezterm.lua → bin/sync-wezterm-config
+ 11. LSP: .grok/lsp.json (rust-analyzer + gopls + lua-language-server) + lsp_tools in ~/.grok/config.toml
 
 Docs: https://herdr.dev/docs/  |  Plugins: https://herdr.dev/plugins/  |  Blog: https://herdr.dev/blog/
 Source: https://github.com/herdrdev/herdr
