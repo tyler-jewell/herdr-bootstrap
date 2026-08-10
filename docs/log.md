@@ -13,3 +13,4 @@ YYYY-MM-DD | title | change
 2026-08-10 | plugins | jewell.* short names; drop maps/herdr-* aliases; agent-browser keys
 
 2026-08-10 | lang plugins | code-gates → go/rust/lua-lang (LSP equip); quality via rules steward
+2026-08-10 | agent-rules | CAPS NEVER: no machine rules only in ~/; consolidated into .grok/rules/agent-rule-quality.md
