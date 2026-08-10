@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Herdr machine bootstrap — idempotent install/update of herdr, WezTerm (outer
-# terminal, Herdr-compatible), Node/npx, Grok, agent skills (herdr, llm-wiki,
+# terminal for Herdr + agents), Node/npx, Grok, agent skills (herdr, llm-wiki,
 # docs-wiki), agent-native skill symlinks (#1874 / PR #1883), Grok integration
 # hooks, global Herdr + WezTerm config sync, and plugins.
 #
@@ -11,6 +11,13 @@
 # Plugins: clones/pulls https://github.com/tyler-jewell/herdr-plugins (all subdirs
 # with herdr-plugin.toml), builds each (Go/Rust), and `herdr plugin link`s them.
 # Override: HERDR_PLUGINS_ROOT, HERDR_PLUGINS_GIT_URL, HERDR_PLUGINS_REF.
+#
+# Requirement: Herdr + agent work uses WezTerm (not optional).
+#   - install binary + Herdr-tuned config (Kitty keyboard/graphics)
+#   - export TERMINAL=wezterm + user-local default registration (no sudo)
+#     so tools that spawn a terminal for this workflow hit WezTerm
+#   - does NOT claim to replace every OS terminal (esp. macOS Terminal.app)
+#   --skip-wezterm is the only escape hatch (break-glass / CI)
 #
 # Safety:
 #   - never runs bare `herdr` (TUI attach)
@@ -1106,21 +1113,162 @@ install_wezterm_linux_deb_extract() {
     ln -sfn "$share/bin/wezterm" "$LOCAL_BIN/wezterm"
   fi
   rm -rf "$tmp"
-  # Desktop entry for GUI launchers
+  log "installed WezTerm from deb extract → $share"
+  return 0
+}
+
+# Resolve absolute path to the wezterm CLI (for desktop Exec= and symlinks).
+wezterm_cli_path() {
+  if command -v wezterm >/dev/null 2>&1; then
+    command -v wezterm
+    return 0
+  fi
+  if [ -x "$LOCAL_BIN/wezterm" ]; then
+    printf '%s\n' "$LOCAL_BIN/wezterm"
+    return 0
+  fi
+  return 1
+}
+
+# Linux .desktop entry (GUI launchers + TerminalEmulator category).
+# Idempotent; written for every Linux install path (brew / AppImage / deb).
+write_wezterm_desktop_entry() {
+  wt="$1"
   apps="$HOME/.local/share/applications"
+  desktop="$apps/org.wezfurlong.wezterm.desktop"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would write $desktop Exec=$wt"
+    return 0
+  fi
   mkdir -p "$apps"
-  cat >"$apps/org.wezfurlong.wezterm.desktop" <<EOF
+  cat >"$desktop" <<EOF
 [Desktop Entry]
 Name=WezTerm
-Comment=Wez's Terminal Emulator (herdr-bootstrap)
-Exec=$LOCAL_BIN/wezterm
+Comment=Wez's Terminal Emulator (herdr-bootstrap: Herdr + agent outer terminal)
+TryExec=$wt
+Exec=$wt %F
 Icon=org.wezfurlong.wezterm
 Terminal=false
 Type=Application
-Categories=System;TerminalEmulator;
+Categories=System;TerminalEmulator;Utility;
+StartupNotify=true
+Keywords=shell;prompt;command;commandline;cmd;terminal;
 EOF
-  log "installed WezTerm from deb extract → $share"
-  return 0
+  log "wrote desktop entry: $desktop"
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$apps" 2>/dev/null || true
+  fi
+}
+
+# Herdr + agent work uses WezTerm — register user-local defaults so that path
+# stays on WezTerm (no sudo). Part of install_wezterm; only --skip-wezterm skips.
+#
+# Requirement scope: outer terminal for Herdr/agents — not “replace every app
+# that can open a terminal on this OS.”
+#
+# Linux: .desktop + xdg-terminals.list + GNOME gsettings + $TERMINAL + user-local
+#        x-terminal-emulator shadow on PATH.
+# macOS: no OS-wide default-terminal API; ensure app registration + $TERMINAL.
+prefer_wezterm_as_default_terminal() {
+  log "registering WezTerm for Herdr + agent work (user-local default, no sudo)"
+
+  wt=""
+  if ! wt="$(wezterm_cli_path)"; then
+    warn "wezterm not on PATH — cannot register for Herdr/agent outer terminal"
+    return 0
+  fi
+
+  # Shell env: tools that spawn $TERMINAL (scripts, some editors/file managers)
+  term_block='export TERMINAL=wezterm
+# herdr-bootstrap: Herdr + agent work uses WezTerm'
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    if [ -f "$rc" ] || [ "$rc" = "$HOME/.zshrc" ]; then
+      append_once "$rc" "# >>> herdr-bootstrap terminal >>>" \
+"$term_block
+# <<< herdr-bootstrap terminal <<<"
+    fi
+  done
+  export TERMINAL=wezterm
+
+  if [ "$OS" = "darwin" ]; then
+    # Prefer user-local app, then system Applications.
+    app=""
+    for candidate in \
+      "$HOME/Applications/WezTerm.app" \
+      "/Applications/WezTerm.app"
+    do
+      if [ -d "$candidate" ]; then
+        app="$candidate"
+        break
+      fi
+    done
+    if [ -n "$app" ]; then
+      lsreg="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+      if [ -x "$lsreg" ] && [ "$DRY_RUN" != 1 ]; then
+        "$lsreg" -f "$app" 2>/dev/null || true
+        log "registered WezTerm with Launch Services: $app"
+      elif [ "$DRY_RUN" = 1 ]; then
+        log "[dry-run] would lsregister $app"
+      fi
+    else
+      warn "WezTerm.app not found under ~/Applications or /Applications — open WezTerm once after install"
+    fi
+    log "macOS: TERMINAL=wezterm set; open WezTerm.app for Herdr + agents (Terminal.app is not replaced OS-wide)"
+    return 0
+  fi
+
+  # --- Linux ---
+  write_wezterm_desktop_entry "$wt"
+
+  # FreeDesktop xdg-terminal-exec preference list (when present on the host)
+  xdg_term_list="$HOME/.config/xdg-terminals.list"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would prefer org.wezfurlong.wezterm.desktop in $xdg_term_list"
+  else
+    mkdir -p "$(dirname "$xdg_term_list")"
+    if [ ! -f "$xdg_term_list" ] || ! grep -qxF 'org.wezfurlong.wezterm.desktop' "$xdg_term_list" 2>/dev/null; then
+      # Prepend so WezTerm wins over other entries already present
+      tmp_list="$(mktemp "${TMPDIR:-/tmp}/xdg-terminals.XXXXXX")"
+      printf '%s\n' 'org.wezfurlong.wezterm.desktop' >"$tmp_list"
+      if [ -f "$xdg_term_list" ]; then
+        grep -vxF 'org.wezfurlong.wezterm.desktop' "$xdg_term_list" >>"$tmp_list" || true
+      fi
+      mv "$tmp_list" "$xdg_term_list"
+      log "preferred WezTerm in $xdg_term_list"
+    fi
+  fi
+
+  # GNOME "Open in Terminal" and default terminal app
+  if command -v gsettings >/dev/null 2>&1; then
+    if [ "$DRY_RUN" = 1 ]; then
+      log "[dry-run] would gsettings terminal exec → $wt"
+    else
+      gsettings set org.gnome.desktop.default-applications.terminal exec "$wt" 2>/dev/null && \
+        log "GNOME default terminal exec → $wt" || true
+      gsettings set org.gnome.desktop.default-applications.terminal exec-arg '' 2>/dev/null || true
+    fi
+  fi
+
+  # KDE (optional; ignore failures)
+  if command -v kwriteconfig5 >/dev/null 2>&1 && [ "$DRY_RUN" != 1 ]; then
+    kwriteconfig5 --file kdeglobals --group General --key TerminalApplication wezterm 2>/dev/null || true
+    kwriteconfig5 --file kdeglobals --group General --key TerminalService org.wezfurlong.wezterm.desktop 2>/dev/null || true
+  elif command -v kwriteconfig6 >/dev/null 2>&1 && [ "$DRY_RUN" != 1 ]; then
+    kwriteconfig6 --file kdeglobals --group General --key TerminalApplication wezterm 2>/dev/null || true
+    kwriteconfig6 --file kdeglobals --group General --key TerminalService org.wezfurlong.wezterm.desktop 2>/dev/null || true
+  fi
+
+  # Shadow x-terminal-emulator for user shells (LOCAL_BIN first on PATH). No sudo
+  # update-alternatives — print hint if system alternative still wins for absolute paths.
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would ln -sfn $wt $LOCAL_BIN/x-terminal-emulator"
+  else
+    mkdir -p "$LOCAL_BIN"
+    ln -sfn "$wt" "$LOCAL_BIN/x-terminal-emulator"
+    log "linked $LOCAL_BIN/x-terminal-emulator → $wt (user PATH)"
+  fi
+
+  log "WezTerm registered for Herdr + agent work (Linux user session)"
 }
 
 install_wezterm_binary() {
@@ -1211,11 +1359,12 @@ sync_wezterm_config() {
 
 install_wezterm() {
   if [ "$SKIP_WEZTERM" = 1 ]; then
-    log "skip wezterm (--skip-wezterm)"
+    log "skip wezterm (--skip-wezterm) — break-glass only; Herdr + agent work requires WezTerm"
     return 0
   fi
   install_wezterm_binary
   sync_wezterm_config
+  prefer_wezterm_as_default_terminal
 }
 
 # --- Integrations ---
@@ -1370,13 +1519,14 @@ verify() {
     printf '  MISS agent-browser keybindings in global config\n'
   fi
   if [ "$SKIP_WEZTERM" = 1 ]; then
-    printf '  SKIP wezterm (--skip-wezterm)\n'
+    printf '  SKIP wezterm (--skip-wezterm break-glass)\n'
   else
     if command -v wezterm >/dev/null 2>&1; then
       printf '  OK  wezterm -> %s\n' "$(command -v wezterm)"
       wezterm --version 2>/dev/null | sed 's/^/       /' || true
     else
-      printf '  MISS wezterm (outer terminal; install or re-run without --skip-wezterm)\n'
+      printf '  MISS wezterm (Herdr + agent outer terminal; re-run without --skip-wezterm)\n'
+      ok=0
     fi
     if [ -f "$HOME/.config/wezterm/wezterm.lua" ] && \
        grep -q 'enable_kitty_keyboard' "$HOME/.config/wezterm/wezterm.lua" 2>/dev/null; then
@@ -1390,6 +1540,25 @@ verify() {
       printf '  SKIP project config/wezterm (no clone root)\n'
     else
       printf '  MISS project config/wezterm/wezterm.lua\n'
+    fi
+    # Herdr + agent outer-terminal registration
+    if grep -F '# >>> herdr-bootstrap terminal >>>' "$HOME/.zshrc" >/dev/null 2>&1 || \
+       grep -F '# >>> herdr-bootstrap terminal >>>' "$HOME/.bashrc" >/dev/null 2>&1; then
+      printf '  OK  shell TERMINAL=wezterm (Herdr + agent outer terminal)\n'
+    else
+      printf '  MISS shell TERMINAL=wezterm (re-run install_wezterm / install.sh)\n'
+    fi
+    if [ "$OS" != "darwin" ]; then
+      if [ -f "$HOME/.local/share/applications/org.wezfurlong.wezterm.desktop" ]; then
+        printf '  OK  Linux desktop entry org.wezfurlong.wezterm.desktop\n'
+      else
+        printf '  MISS Linux WezTerm .desktop (Herdr + agent terminal registration)\n'
+      fi
+      if [ -L "$LOCAL_BIN/x-terminal-emulator" ] || [ -x "$LOCAL_BIN/x-terminal-emulator" ]; then
+        printf '  OK  %s/x-terminal-emulator → wezterm\n' "$LOCAL_BIN"
+      else
+        printf '  MISS %s/x-terminal-emulator (user PATH shadow for Herdr/agent tools)\n' "$LOCAL_BIN"
+      fi
     fi
   fi
 
@@ -1427,8 +1596,10 @@ cat <<'EOF'
 Bootstrap complete.
 
 Next steps:
-  1. Open a new terminal (or: source ~/.zshrc)
-  2. Prefer WezTerm as the outer terminal (Herdr-compatible config in ~/.config/wezterm)
+  1. Open a new shell (source ~/.zshrc) so TERMINAL=wezterm is active
+  2. Open WezTerm — Herdr + agent work uses WezTerm (config in ~/.config/wezterm)
+     macOS: open WezTerm.app (do not use Terminal.app for Herdr/agents)
+     Linux: user-local default hooks set so spawned terminals hit WezTerm
   3. If needed: grok login
   4. From WezTerm (not nested inside Herdr):  herdr
   5. Start your agent in a pane (e.g. grok)

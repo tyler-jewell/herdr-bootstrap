@@ -74,7 +74,7 @@ Idempotent phases:
 1. Ensure `~/.local/bin` on PATH (shell rc + current process)
 2. Portable Node LTS → `~/.local/node` + `node`/`npm`/`npx` in `~/.local/bin` (if missing or &lt; 20)
 3. Herdr binary via official installer / `herdr update` (never attaches TUI, never `server stop`)
-4. WezTerm (outer terminal) if missing + sync `config/wezterm` → `~/.config/wezterm` (Kitty keyboard/graphics for Herdr)
+4. WezTerm (Herdr + agent outer terminal) if missing + sync `config/wezterm` → `~/.config/wezterm` + user-local registration for that path
 5. Grok CLI via official installer if missing
 6. `npx --yes skills add herdrdev/herdr --skill herdr -g -y` (canonical skill only)
 7. Agent-native skill symlink workaround (skills#1874 / PR#1883)
@@ -173,19 +173,20 @@ This bootstrap repo has **no** `plugins/` trees (skills may still be installed f
 11. **No side stores** for machine rules (`config/grok/…` was a false path); native harness only.
 12. **Human-approval mode:** ship via PR to remote `main`; do not treat local main commits as published.
 
-## WezTerm (outer terminal)
+## WezTerm (Herdr + agent outer terminal)
 
-Herdr runs **inside** a real terminal. This bootstrap prefers **WezTerm** on macOS and Linux:
+Herdr runs **inside** a real terminal. **Requirement: Herdr + agent work uses WezTerm** (not optional; not “replace every OS terminal”):
 
 - Install: existing `wezterm` on PATH → else Homebrew → else portable (no sudo): macOS `~/Applications/WezTerm.app`, Linux AppImage (x86_64) or `.deb` extract (aarch64).
 - Config source of truth: `config/wezterm/wezterm.lua` → `bin/sync-wezterm-config` → `~/.config/wezterm/wezterm.lua`
+- Registration for that path (always with install): `TERMINAL=wezterm` in shell rc; Linux `.desktop` + GNOME/KDE + user-local `x-terminal-emulator`; macOS Launch Services. Open **WezTerm.app** for Herdr on macOS.
 - Required for agents: `enable_kitty_keyboard = true` (WezTerm defaults this off)
 - Aligns with Herdr `experimental.kitty_graphics` for image panes
 - Optional overrides: `~/.config/wezterm/user.lua` (never overwritten)
 
 Do not invent WezTerm keys for Herdr control; Herdr keybindings live in `config/herdr/config.toml` and https://herdr.dev/docs/keyboard/.
 
-Flags: `--skip-wezterm`, `--skip-wezterm-config-sync`. Override release: `WEZTERM_VERSION=…`.
+Flags: `--skip-wezterm` (break-glass — skips binary + config + registration), `--skip-wezterm-config-sync`. Override release: `WEZTERM_VERSION=…`.
 
 ## Verify
 
@@ -198,6 +199,7 @@ test -f ~/.agents/skills/herdr/SKILL.md
 test -f ~/.grok/skills/herdr/SKILL.md
 test -f ~/.config/wezterm/wezterm.lua
 grep -q enable_kitty_keyboard ~/.config/wezterm/wezterm.lua
+grep -q 'herdr-bootstrap terminal' ~/.zshrc
 herdr integration status
 ```
 

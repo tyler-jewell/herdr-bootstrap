@@ -31,12 +31,18 @@ sh install.sh
 
 ## Install (idempotent via `install.sh`)
 
+**Requirement: Herdr + agent work uses WezTerm.** `install.sh` always:
+
 1. Use existing `wezterm` on `PATH` if present.
 2. Else Homebrew: `brew install --cask wezterm` (macOS) / Linuxbrew formula when available.
 3. Else portable (no sudo):
    - **macOS:** GitHub release zip → `~/Applications/WezTerm.app`, CLI link in `~/.local/bin`
    - **Linux x86_64:** AppImage → `~/.local/bin/wezterm`
    - **Linux aarch64:** extract `.deb` payload into `~/.local/share/wezterm`, link CLI
+4. Sync this config → `~/.config/wezterm/`
+5. Register for that workflow (user-local, no sudo): `TERMINAL=wezterm` in shell rc; on Linux also `.desktop`, `xdg-terminals.list`, GNOME/KDE hooks, and `~/.local/bin/x-terminal-emulator` → wezterm.
+
+Only `--skip-wezterm` skips (break-glass). Scope is **Herdr + agents**, not every OS terminal. On macOS open **WezTerm.app** for Herdr (Terminal.app is not replaced system-wide).
 
 ## Verify
 
@@ -45,6 +51,9 @@ command -v wezterm
 wezterm --version
 test -f ~/.config/wezterm/wezterm.lua
 grep -q enable_kitty_keyboard ~/.config/wezterm/wezterm.lua
+grep -q 'herdr-bootstrap terminal' ~/.zshrc && echo TERMINAL-ok
+# Linux:
+test -f ~/.local/share/applications/org.wezfurlong.wezterm.desktop && echo desktop-ok
 ```
 
 Then open WezTerm, run `herdr` from a normal shell (not inside Herdr).

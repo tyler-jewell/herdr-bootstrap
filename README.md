@@ -38,13 +38,13 @@ Use the GitHub UI “Raw” link for `install.sh` so you never hardcode an accou
 | `--skip-grok` | Do not install/update Grok |
 | `--skip-skills` | Skip `npx skills add` and symlink workaround |
 | `--skip-integrations` | Skip `herdr integration install …` |
-| `--skip-wezterm` | Skip WezTerm binary install and config sync |
-| `--skip-wezterm-config-sync` | Install WezTerm if needed but do not overwrite `~/.config/wezterm` |
+| `--skip-wezterm` | Break-glass: skip WezTerm binary, config, and registration (**Herdr + agent work requires WezTerm**) |
+| `--skip-wezterm-config-sync` | Install WezTerm if needed but do not overwrite `~/.config/wezterm` (still registers for Herdr/agent path) |
 | `--dry-run` | Print actions only |
 
 ## After install
 
-1. Open **WezTerm** (preferred outer terminal) or a new shell (`source ~/.zshrc`).
+1. Open a new shell (`source ~/.zshrc`) so `TERMINAL=wezterm` is active, then open **WezTerm**. **Herdr + agent work uses WezTerm** (required).
 2. Authenticate Grok if needed: `grok login`.
 3. Start Herdr from WezTerm — a **normal** terminal, not nested inside Herdr:
 
@@ -64,7 +64,8 @@ If the install already succeeded, that guide is the next step for mouse/keyboard
 | Component | Location / method |
 |-----------|-------------------|
 | Herdr | Official `https://herdr.dev/install.sh` → `~/.local/bin/herdr` (updates via `herdr update`) |
-| **WezTerm** | Existing binary, else Homebrew, else portable (macOS app / Linux AppImage or deb-extract) — no sudo |
+| **WezTerm** (Herdr + agents) | Required outer terminal for Herdr/agent work; existing binary, else Homebrew, else portable — no sudo |
+| WezTerm registration | User-local for that path: `TERMINAL=wezterm`; Linux `.desktop` + GNOME/KDE + `x-terminal-emulator` shadow; macOS Launch Services (not full Terminal.app replacement) |
 | WezTerm config | `config/wezterm/wezterm.lua` → `~/.config/wezterm/` (Kitty keyboard + graphics for Herdr) |
 | Node / npm / npx | Portable Node LTS under `~/.local/node`, linked into `~/.local/bin` |
 | Grok CLI | Official `https://x.ai/cli/install.sh` if missing |
@@ -136,9 +137,11 @@ sh install.sh
 
 Includes: agent labels on pane borders, quiet toasts, **Kitty graphics**, maps open/preview keys (`prefix+shift+m` / `prefix+shift+p`), docs-wiki doctor key. See [docs/HERDR_RULES.md](./docs/HERDR_RULES.md).
 
-## WezTerm (outer terminal, version-controlled)
+## WezTerm (Herdr + agent outer terminal)
 
 **Source of truth:** [`config/wezterm/wezterm.lua`](./config/wezterm/wezterm.lua).
+
+**Requirement: Herdr + agent work uses WezTerm.** Install equips config and user-local registration for that path (see [`docs/concepts/wezterm.md`](./docs/concepts/wezterm.md)).
 
 Synced to `~/.config/wezterm/wezterm.lua` so Herdr and coding agents get:
 
