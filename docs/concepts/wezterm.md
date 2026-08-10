@@ -2,30 +2,36 @@
 title: WezTerm outer terminal
 updated: 2026-08-10
 tags: [concepts, wezterm, herdr]
-summary: WezTerm is the required outer terminal; install.sh registers it as default (no sudo)
+summary: Herdr + agent work uses WezTerm; install equips and registers it for that path
 ---
 
 # WezTerm outer terminal
 
-Herdr is a **multiplexer** that runs *inside* a terminal emulator. This bootstrap treats **WezTerm** as the **required** outer terminal on macOS and Linux — not an optional preference.
+Herdr is a **multiplexer** that runs *inside* a terminal emulator.
 
 ## Requirement
+
+**Herdr + agent work uses WezTerm.** That is required, not optional.
+
+| In scope | Out of scope |
+|----------|--------------|
+| Open WezTerm → run `herdr` → agents in panes | Replacing every OS “open a terminal” path forever |
+| Herdr-tuned keyboard + graphics config | Claiming macOS Terminal.app is gone |
+| User-local hooks so tools spawn WezTerm | `sudo` / system `update-alternatives` |
 
 `install.sh` → `install_wezterm` always:
 
 1. Installs the binary (if missing)
 2. Syncs Herdr-tuned config
-3. Registers WezTerm as the default terminal **user-local, no sudo**
+3. Registers WezTerm for this workflow (user-local, no sudo)
 
-Only `--skip-wezterm` skips this (break-glass / CI). There is no separate “set default” flag.
+Only `--skip-wezterm` skips (break-glass / CI).
 
-| Platform | What install does |
-|----------|-------------------|
+| Platform | Registration |
+|----------|----------------|
 | **Both** | `export TERMINAL=wezterm` in `~/.zshrc` / `~/.bashrc` |
-| **Linux** | `.desktop` under `~/.local/share/applications/`, `xdg-terminals.list`, GNOME `gsettings`, KDE keys when present, `$HOME/.local/bin/x-terminal-emulator` → wezterm |
-| **macOS** | Launch Services register of `WezTerm.app`; **no** OS API to replace Terminal.app system-wide — open WezTerm.app for Herdr |
-
-Debian/Ubuntu system `update-alternatives` for `/usr/bin/x-terminal-emulator` needs **sudo** and is intentionally **not** run (house safety: no sudo). User PATH shadow covers normal sessions.
+| **Linux** | `.desktop`, `xdg-terminals.list`, GNOME `gsettings`, KDE keys when present, `$HOME/.local/bin/x-terminal-emulator` → wezterm |
+| **macOS** | Launch Services register of `WezTerm.app`; open **WezTerm.app** for Herdr (Terminal.app not replaced OS-wide) |
 
 ## Why WezTerm
 
@@ -44,7 +50,7 @@ Debian/Ubuntu system `update-alternatives` for `/usr/bin/x-terminal-emulator` ne
 
 ## Workflow
 
-1. Open **WezTerm** (required outer terminal)
+1. Open **WezTerm**
 2. In a normal shell (not already in Herdr): `herdr`
 3. Agents run in Herdr panes (`HERDR_ENV=1`)
 
@@ -52,7 +58,7 @@ Do not nest `herdr` inside a Herdr pane. Do not use WezTerm’s own mux as a sec
 
 ## Install paths
 
-See `install.sh` / `config/wezterm/README.md`: existing binary → Homebrew → portable zip/AppImage/deb-extract. Default-terminal registration runs after binary + config sync.
+See `install.sh` / `config/wezterm/README.md`: existing binary → Homebrew → portable zip/AppImage/deb-extract. Registration runs after binary + config sync.
 
 ## Upstream
 

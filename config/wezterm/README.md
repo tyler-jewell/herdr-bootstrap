@@ -31,7 +31,7 @@ sh install.sh
 
 ## Install (idempotent via `install.sh`)
 
-WezTerm is the **required** outer terminal (not optional). `install.sh` always:
+**Requirement: Herdr + agent work uses WezTerm.** `install.sh` always:
 
 1. Use existing `wezterm` on `PATH` if present.
 2. Else Homebrew: `brew install --cask wezterm` (macOS) / Linuxbrew formula when available.
@@ -40,9 +40,9 @@ WezTerm is the **required** outer terminal (not optional). `install.sh` always:
    - **Linux x86_64:** AppImage → `~/.local/bin/wezterm`
    - **Linux aarch64:** extract `.deb` payload into `~/.local/share/wezterm`, link CLI
 4. Sync this config → `~/.config/wezterm/`
-5. **Register as default terminal** (user-local, no sudo): `TERMINAL=wezterm` in shell rc; on Linux also `.desktop`, `xdg-terminals.list`, GNOME/KDE hooks, and `~/.local/bin/x-terminal-emulator` → wezterm.
+5. Register for that workflow (user-local, no sudo): `TERMINAL=wezterm` in shell rc; on Linux also `.desktop`, `xdg-terminals.list`, GNOME/KDE hooks, and `~/.local/bin/x-terminal-emulator` → wezterm.
 
-Only `--skip-wezterm` skips install + default registration (break-glass). macOS cannot fully replace Terminal.app; open **WezTerm.app** for Herdr.
+Only `--skip-wezterm` skips (break-glass). Scope is **Herdr + agents**, not every OS terminal. On macOS open **WezTerm.app** for Herdr (Terminal.app is not replaced system-wide).
 
 ## Verify
 
