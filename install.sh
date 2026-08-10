@@ -586,16 +586,6 @@ install_herdr_plugins() {
   # Agent skills shipped with the monorepo (not in herdr-bootstrap)
   install_skills_from_monorepo "$plugins_root"
 
-  # staticcheck for Go code gate
-  if command -v go >/dev/null 2>&1 && ! command -v staticcheck >/dev/null 2>&1; then
-    log "installing staticcheck (Go code gate)"
-    if [ "$DRY_RUN" = 0 ]; then
-      mkdir -p "$LOCAL_BIN"
-      GOBIN="$LOCAL_BIN" go install honnef.co/go/tools/cmd/staticcheck@latest || \
-        warn "staticcheck install failed"
-    fi
-  fi
-
   # Discover every first-level subdir with herdr-plugin.toml and install all
   count=0
   linked=0
@@ -887,6 +877,32 @@ sync_grok_config() {
   if [ -f "$BOOTSTRAP_ROOT/.grok/lsp.json" ]; then
     log "project LSP config: $BOOTSTRAP_ROOT/.grok/lsp.json"
   fi
+  sync_grok_harness_surfaces
+}
+
+# Mirror versioned .grok/{rules,hooks,agents,personas} → ~/.grok/ (dotfiles shape)
+sync_grok_harness_surfaces() {
+  if [ -z "$BOOTSTRAP_ROOT" ] || [ ! -d "$BOOTSTRAP_ROOT/.grok" ]; then
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would sync .grok/{rules,hooks,agents,personas} → ~/.grok/"
+    return 0
+  fi
+  for surface in rules hooks agents personas; do
+    src="$BOOTSTRAP_ROOT/.grok/$surface"
+    dst="$HOME/.grok/$surface"
+    if [ ! -d "$src" ]; then
+      continue
+    fi
+    mkdir -p "$dst"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a "$src/" "$dst/"
+    else
+      cp -R "$src/." "$dst/"
+    fi
+    log "synced .grok/$surface → ~/.grok/$surface"
+  done
 }
 
 # --- Sync versioned global Herdr config → ~/.config/herdr/config.toml ---

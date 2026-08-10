@@ -9,12 +9,15 @@ This repo is a **dotfiles-style machine layout**. The version-controlled tree is
 | Repo path | Live destination (example) |
 |-----------|----------------------------|
 | `.grok/*` | `~/.grok/*` (plus project `.grok` when working here) |
+| `.grok/rules/`, `hooks/`, `agents/`, `personas/` | `~/.grok/rules|hooks|agents|personas/` (machine-wide harness) |
 | `config/herdr/` | `~/.config/herdr/` |
 | `config/wezterm/` | `~/.config/wezterm/` |
 | `policy/` | pinned under `~/.config/herdr-bootstrap/` (or sibling lookup) |
 | `bin/` | helpers on `PATH` / called as `bin/…` |
 
 **Requirement for agents:** Prefer adding or editing files in the shape they will have on disk. Do **not** invent alternate layouts, intermediate formats, or rename-on-install schemes — every mismatch forces more setup code. Thin sync scripts and `install.sh` phases are fine; structural translation is not. Plugins/skills live only in [herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), not here.
+
+**Harness surfaces:** put policy in the native Grok slot (rules / hooks / agents / personas / skills / config) even if only one consumer. CAPS `NEVER`/`ALWAYS`/`MUST` may open the **rules steward** (right Herdr pane) via `rules-steward` + `.grok/hooks/policy-caps.json`.
 
 This repository **orchestrates** a greenfield install of Herdr, WezTerm (outer terminal), Node/npx, Grok, agent skills, and integrations. It is **not** the Herdr source tree and **not** the plugin monorepo.
 
@@ -99,20 +102,19 @@ Do not invent a second global catalog or claim native Herdr project config. Matc
 
 After changing `config/herdr/config.toml`, run `bin/sync-herdr-config` (or re-run `install.sh`) so every agent session picks up the update.
 
-## Code gates (per language — zero warnings)
+## Language equipping (LSP) vs quality rules
 
-When finishing Rust/Go work, run the matching Herdr plugin (or CLI). **World-class only: no warnings, no local lint ignores/overrides.**
+| Concern | Where |
+|---------|--------|
+| LSP servers on PATH + doctor | Herdr plugins `jewell.go-lang` / `jewell.rust-lang` / `jewell.lua-lang` (`status`, `ensure`, `doctor`) |
+| Project LSP map | [`.grok/lsp.json`](./.grok/lsp.json) → synced to `~/.grok/lsp.json` |
+| Quality / MUST–NEVER policy | **Rules steward** + versioned [`.grok/rules/`](./.grok/rules/) (e.g. `language-lsp.md`) |
 
-| Language | Plugin / CLI | What it enforces |
-|----------|----------------|------------------|
-| Rust | `code-gate-rust` (`jewell.code-gate-rust`) | `fmt --check`, clippy zero-warning (pedantic on manual), `cargo check`, ban `#[allow]` / cap-lints allow |
-| Go | `code-gate-go` (`jewell.code-gate-go`) | `gofmt -l`, `go vet`, `staticcheck`, `go build`, ban `//nolint` / golangci disable configs |
+Plugin sources: **https://github.com/tyler-jewell/herdr-plugins** only.  
+This bootstrap repo has **no** `plugins/` trees (skills may still be installed from the monorepo).
 
-Plugin and house skill sources: **https://github.com/tyler-jewell/herdr-plugins** only.  
-This bootstrap repo has **no** `plugins/` or `skills/` trees.
-
-- Auto-hook on agent **done/idle** when the tree is **cheap** (size limits); use `--force` for full runs.
-- Do **not** add `#[allow]`, `//nolint`, or project linter configs that silence rules — fix the code instead.
+- Do **not** reintroduce code-gate format/lint hooks; put policy in rules.
+- Prefer Grok **`lsp` tool** when editing Rust/Go/Lua.
 
 
 ## Safety rules (agents)

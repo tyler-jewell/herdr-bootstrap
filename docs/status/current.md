@@ -16,7 +16,7 @@ summary: Live view of herdr-bootstrap purpose and tooling
 | `bin/herdr-discover` | Open spaces for `$HOME/**/.herdr/config.toml` |
 | `bin/sync-wezterm-config` | Sync `config/wezterm` → `~/.config/wezterm` |
 | [herdr-plugins `docs-wiki`](https://github.com/tyler-jewell/herdr-plugins/tree/main/docs-wiki) | Go Herdr plugin: doctor, policy fix, agent-done freshness hooks |
-| [herdr-plugins code-gates](https://github.com/tyler-jewell/herdr-plugins) | `code-gate-go` / `code-gate-rust` strict gates |
+| [herdr-plugins language plugins](https://github.com/tyler-jewell/herdr-plugins) | `go-lang` / `rust-lang` / `lua-lang` LSP equip + rules-steward |
 | [herdr-plugins `skills/docs-wiki`](https://github.com/tyler-jewell/herdr-plugins/tree/main/skills/docs-wiki) | Agent skill: search/update `docs/*` |
 | `policy/llm-wiki.toml` | Machine wiki policy (versioned) |
 | `config/wezterm/` | Herdr-compatible WezTerm config (Kitty keyboard/graphics) |

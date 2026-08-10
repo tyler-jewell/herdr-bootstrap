@@ -160,20 +160,20 @@ sh install.sh
 Details: [`config/wezterm/README.md`](./config/wezterm/README.md).  
 Keyboard context: [herdr.dev/docs/keyboard](https://herdr.dev/docs/keyboard/).
 
-## Code gates (one plugin per language)
-
-Strict format/lint/build after agent work (or on demand). **No warnings; no local lint suppressions/overrides.**
+## Language plugins + rules steward
 
 Plugin **source of truth:** public monorepo [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins) (clone next to this repo as `../herdr-plugins`).
 
 | Plugin (monorepo) | Detects | Commands |
 |-------------------|---------|----------|
-| [`code-gate-rust`](https://github.com/tyler-jewell/herdr-plugins/tree/main/code-gate-rust) | `Cargo.toml` | `fmt --check`, `clippy -D warnings`, `cargo check` |
-| [`code-gate-go`](https://github.com/tyler-jewell/herdr-plugins/tree/main/code-gate-go) | `go.mod` | `gofmt`, `go vet`, `staticcheck`, `go build` |
+| [`rust-lang`](https://github.com/tyler-jewell/herdr-plugins/tree/main/rust-lang) | `Cargo.toml` | Ensure **rust-analyzer** + doctor |
+| [`go-lang`](https://github.com/tyler-jewell/herdr-plugins/tree/main/go-lang) | `go.mod` | Ensure **gopls** + doctor |
+| [`lua-lang`](https://github.com/tyler-jewell/herdr-plugins/tree/main/lua-lang) | `*.lua` | Ensure **lua-language-server** + doctor |
+| [`rules-steward`](https://github.com/tyler-jewell/herdr-plugins/tree/main/rules-steward) | CAPS policy | Spawn Herdr **rules** agent |
 
-Hook: `pane.agent_status_changed` → run when agent is `done`/`idle` and the tree is **cheap** (size limits). CLI: `code-gate-rust|code-gate-go check --current [--force]`.
+Language plugins equip LSPs only. Quality policy lives in [`.grok/rules/`](./.grok/rules/) via the rules steward (not format-gate hooks).
 
-`install.sh` **clones/pulls** [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), then builds and `herdr plugin link`s **every** plugin subdir (`docs-wiki`, `code-gate-go`, `code-gate-rust`, `agent-browser`, …). Plugin ids use `jewell.*` and short binary names (no `herdr-` prefix). Override with `HERDR_PLUGINS_ROOT` / `HERDR_PLUGINS_GIT_URL` / `HERDR_PLUGINS_REF`.
+`install.sh` **clones/pulls** [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), then builds and `herdr plugin link`s **every** plugin subdir. Ids: `jewell.*`, short binary names. Override with `HERDR_PLUGINS_ROOT` / `HERDR_PLUGINS_GIT_URL` / `HERDR_PLUGINS_REF`.
 
 ## Multi-project spaces (`herdr-discover`)
 

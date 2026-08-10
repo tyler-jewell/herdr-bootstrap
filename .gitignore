@@ -10,9 +10,17 @@ node_modules/
 /plugins/
 /skills/
 
-# Track team Grok config; ignore anything else under .grok/
+# Track team Grok harness surfaces (dotfiles shape → ~/.grok/); ignore the rest
 .grok/*
 !.grok/config.yaml
 !.grok/config.toml
 !.grok/lsp.json
 !.grok/README.md
+!.grok/rules/
+!.grok/rules/**
+!.grok/hooks/
+!.grok/hooks/**
+!.grok/agents/
+!.grok/agents/**
+!.grok/personas/
+!.grok/personas/**

@@ -1,10 +1,14 @@
 # Project Grok config
 
-| File | Role |
-|------|------|
-| **`config.yaml`** | **Source of truth** (version-controlled). Edit here. |
+| File / dir | Role |
+|------------|------|
+| **`config.yaml`** | **Source of truth** for global Grok settings. Edit here. |
 | `lsp.json` | Project LSP servers (Grok reads this natively). |
 | `config.toml` | Optional project-native MCP/plugins/permissions only. |
+| `rules/` | Machine-wide rules → synced to `~/.grok/rules/` |
+| `hooks/` | Grok hooks (e.g. CAPS → rules-steward) → `~/.grok/hooks/` |
+| `agents/` | Named agent defs → `~/.grok/agents/` |
+| `personas/` | Subagent personas → `~/.grok/personas/` |
 
 ## Override local Grok config (the process)
 
@@ -18,12 +22,15 @@ Your machine’s Grok global settings live in `~/.grok/config.toml`. Grok does *
    # or: sh install.sh   # includes the same sync
    ```
 
-3. Sync **overwrites**:
+3. Sync **overwrites** / mirrors:
    - `~/.grok/config.yaml` ← exact copy of this file  
    - `~/.grok/config.toml` ← generated from this file (Grok runtime)
    - `~/.grok/lsp.json` ← copy of project `lsp.json` (convenience)
+   - `~/.grok/{rules,hooks,agents,personas}/` ← mirrored from this tree (`install.sh`)
 
-4. Restart Grok (new session) so config reloads.
+4. Restart Grok (new session) so config/hooks reload.
+
+**CAPS policy:** whole-word `NEVER`/`ALWAYS`/`MUST`/… fires `rules-steward detect` (hook), which opens/reuses a Herdr rules steward pane.
 
 ## LSP servers (Rust + Go + Lua)
 
