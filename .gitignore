@@ -20,6 +20,9 @@ node_modules/
 !.grok/rules/**
 !.grok/hooks/
 !.grok/hooks/**
+# Herdr integration overwrites these; never version (see agent-rule-quality.md).
+.grok/hooks/herdr.json
+.grok/hooks/herdr-agent-state.sh
 !.grok/agents/
 !.grok/agents/**
 !.grok/personas/
