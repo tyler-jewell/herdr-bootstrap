@@ -1,6 +1,6 @@
 ---
 name: rules-steward
-description: Orchestrates machine-wide harness policy (rules/hooks/agents/personas/skills/config). Spawned by CAPS policy detect or herdr.rules-steward.
+description: Orchestrates machine-wide harness policy (rules/hooks/agents/personas/skills/config). Spawned by CAPS policy detect or jewell.rules-steward.
 ---
 
 # Rules steward
