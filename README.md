@@ -1,6 +1,6 @@
 # Herdr machine bootstrap
 
-Idempotent installer for a **working Herdr coding setup** on a fresh macOS or Linux machine: Herdr, Node/npx, Grok CLI, the herdr agent skill, agent-native skill links, and Grok integration hooks.
+Idempotent installer for a **working Herdr coding setup** on a fresh macOS or Linux machine: Herdr, **WezTerm** (outer terminal, Herdr-tuned config), Node/npx, Grok CLI, the herdr agent skill, agent-native skill links, and Grok integration hooks.
 
 This is **not** the Herdr application source. Upstream Herdr lives at [herdrdev/herdr](https://github.com/herdrdev/herdr).
 
@@ -38,13 +38,15 @@ Use the GitHub UI “Raw” link for `install.sh` so you never hardcode an accou
 | `--skip-grok` | Do not install/update Grok |
 | `--skip-skills` | Skip `npx skills add` and symlink workaround |
 | `--skip-integrations` | Skip `herdr integration install …` |
+| `--skip-wezterm` | Skip WezTerm binary install and config sync |
+| `--skip-wezterm-config-sync` | Install WezTerm if needed but do not overwrite `~/.config/wezterm` |
 | `--dry-run` | Print actions only |
 
 ## After install
 
-1. Open a **new** terminal (or `source ~/.zshrc`).
+1. Open **WezTerm** (preferred outer terminal) or a new shell (`source ~/.zshrc`).
 2. Authenticate Grok if needed: `grok login`.
-3. Start Herdr from a normal terminal (not nested inside Herdr):
+3. Start Herdr from WezTerm — a **normal** terminal, not nested inside Herdr:
 
    ```bash
    cd ~/your-project
@@ -62,6 +64,8 @@ If the install already succeeded, that guide is the next step for mouse/keyboard
 | Component | Location / method |
 |-----------|-------------------|
 | Herdr | Official `https://herdr.dev/install.sh` → `~/.local/bin/herdr` (updates via `herdr update`) |
+| **WezTerm** | Existing binary, else Homebrew, else portable (macOS app / Linux AppImage or deb-extract) — no sudo |
+| WezTerm config | `config/wezterm/wezterm.lua` → `~/.config/wezterm/` (Kitty keyboard + graphics for Herdr) |
 | Node / npm / npx | Portable Node LTS under `~/.local/node`, linked into `~/.local/bin` |
 | Grok CLI | Official `https://x.ai/cli/install.sh` if missing |
 | herdr skill | `npx skills add herdrdev/herdr --skill herdr -g -y` → `~/.agents/skills/herdr` |
@@ -72,10 +76,12 @@ If the install already succeeded, that guide is the next step for mouse/keyboard
 ## Verify
 
 ```bash
-command -v herdr node npx grok
+command -v herdr node npx grok wezterm
 herdr --version
 node -v
+wezterm --version
 test -f ~/.agents/skills/herdr/SKILL.md && echo skill-ok
+test -f ~/.config/wezterm/wezterm.lua && grep -q enable_kitty_keyboard ~/.config/wezterm/wezterm.lua && echo wezterm-config-ok
 ```
 
 ## Grok config (version-controlled) + Rust/Go LSP
@@ -85,7 +91,7 @@ test -f ~/.agents/skills/herdr/SKILL.md && echo skill-ok
 | File | Role |
 |------|------|
 | `.grok/config.yaml` | Team-owned full Grok global settings intent |
-| `.grok/lsp.json` | Project LSP: **rust** (`rust-analyzer`) + **go** (`gopls`) |
+| `.grok/lsp.json` | Project LSP: **rust** + **go** + **lua** (`rust-analyzer`, `gopls`, `lua-language-server`) |
 | `.grok/config.toml` | Project-native MCP/plugins/permissions only |
 | `bin/sync-grok-config` | **Overrides** `~/.grok/config.yaml` + regenerates `~/.grok/config.toml` |
 
@@ -93,17 +99,17 @@ test -f ~/.agents/skills/herdr/SKILL.md && echo skill-ok
 # After editing .grok/config.yaml:
 bin/sync-grok-config
 
-# Or full bootstrap (also installs rust-analyzer + gopls when missing):
+# Or full bootstrap (also installs rust-analyzer + gopls + lua-language-server when missing):
 sh install.sh
 ```
 
-Agents **must** use the Grok `lsp` tool when coding or searching Rust/Go sources — live code on this machine is authoritative; docs can lag (see [AGENTS.md](./AGENTS.md)).
+Agents **must** use the Grok `lsp` tool when coding or searching Rust/Go/Lua sources — live code on this machine is authoritative; docs can lag (see [AGENTS.md](./AGENTS.md)).
 
 **Verify LSP:**
 
 ```bash
 test -f .grok/lsp.json
-command -v rust-analyzer gopls
+command -v rust-analyzer gopls lua-language-server
 grep lsp_tools ~/.grok/config.toml   # true after sync
 # Restart Grok; passive diagnostics need lsp.json + servers;
 # model lsp tool also needs lsp_tools=true
@@ -130,16 +136,44 @@ sh install.sh
 
 Includes: agent labels on pane borders, quiet toasts, **Kitty graphics**, maps open/preview keys (`prefix+shift+m` / `prefix+shift+p`), docs-wiki doctor key. See [docs/HERDR_RULES.md](./docs/HERDR_RULES.md).
 
+## WezTerm (outer terminal, version-controlled)
+
+**Source of truth:** [`config/wezterm/wezterm.lua`](./config/wezterm/wezterm.lua).
+
+Synced to `~/.config/wezterm/wezterm.lua` so Herdr and coding agents get:
+
+| Setting | Why |
+|---------|-----|
+| `enable_kitty_keyboard = true` | Agents request Kitty keyboard protocol (e.g. Shift+Enter) |
+| `enable_kitty_graphics = true` | Matches Herdr `experimental.kitty_graphics` for image/map panes |
+| Left Option = Alt (macOS) | Safe chords reach Herdr; right Option still composes |
+| No steal of `ctrl+b` / `ctrl+alt+*` | Herdr prefix + recommended direct chords stay free |
+
+Optional local overrides: `~/.config/wezterm/user.lua` (never overwritten by sync).
+
+```bash
+bin/sync-wezterm-config
+# or full bootstrap:
+sh install.sh
+```
+
+Details: [`config/wezterm/README.md`](./config/wezterm/README.md).  
+Keyboard context: [herdr.dev/docs/keyboard](https://herdr.dev/docs/keyboard/).
+
 ## Code gates (one plugin per language)
 
 Strict format/lint/build after agent work (or on demand). **No warnings; no local lint suppressions/overrides.**
 
-| Plugin | Detects | Commands |
-|--------|---------|----------|
-| [`plugins/herdr-code-gate-rust`](./plugins/herdr-code-gate-rust) | `Cargo.toml` | `fmt --check`, `clippy -D warnings`, `cargo check` |
-| [`plugins/herdr-code-gate-go`](./plugins/herdr-code-gate-go) | `go.mod` | `gofmt`, `go vet`, `staticcheck`, `go build` |
+Plugin **source of truth:** public monorepo [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins) (clone next to this repo as `../herdr-plugins`).
+
+| Plugin (monorepo) | Detects | Commands |
+|-------------------|---------|----------|
+| [`code-gate-rust`](https://github.com/tyler-jewell/herdr-plugins/tree/main/code-gate-rust) | `Cargo.toml` | `fmt --check`, `clippy -D warnings`, `cargo check` |
+| [`code-gate-go`](https://github.com/tyler-jewell/herdr-plugins/tree/main/code-gate-go) | `go.mod` | `gofmt`, `go vet`, `staticcheck`, `go build` |
 
 Hook: `pane.agent_status_changed` → run when agent is `done`/`idle` and the tree is **cheap** (size limits). CLI: `herdr-code-gate-rust|go check --current [--force]`.
+
+`install.sh` **clones/pulls** [tyler-jewell/herdr-plugins](https://github.com/tyler-jewell/herdr-plugins), then builds and `herdr plugin link`s **every** plugin subdir (`docs-wiki`, `code-gate-go`, `code-gate-rust`, `maps`, …). Override with `HERDR_PLUGINS_ROOT` / `HERDR_PLUGINS_GIT_URL` / `HERDR_PLUGINS_REF`.
 
 ## Multi-project spaces (`herdr-discover`)
 
@@ -170,9 +204,9 @@ Each Herdr space’s **live knowledge** is a lean LLM wiki under that repo’s *
 
 | Piece | Role |
 |-------|------|
-| `policy/llm-wiki.toml` | Machine policy version + rubric weights |
-| `skills/docs-wiki` | Global agent skill (search/update `docs/`) |
-| `plugins/herdr-docs-wiki` | **Go Herdr plugin** — doctor, policy fix, agent-done / focus hooks (no git hooks) |
+| `policy/llm-wiki.toml` | Machine policy version + rubric weights (pinned to `~/.config/herdr-bootstrap/` on install) |
+| [herdr-plugins `skills/docs-wiki`](https://github.com/tyler-jewell/herdr-plugins/tree/main/skills/docs-wiki) | Global agent skill (search/update `docs/`) — installed from monorepo |
+| [herdr-plugins `docs-wiki`](https://github.com/tyler-jewell/herdr-plugins/tree/main/docs-wiki) | **Go Herdr plugin** — doctor, policy fix, agent-done / focus hooks (no git hooks) |
 | `AGENTS.md` markers | Routes agents to the wiki |
 
 ```bash

@@ -6,8 +6,9 @@ auth.json
 *.pem
 node_modules/
 
-# Built plugin binaries (rebuild via install.sh / go build)
-plugins/*/bin/
+# Plugins and agent skills live only in tyler-jewell/herdr-plugins (never here).
+/plugins/
+/skills/
 
 # Track team Grok config; ignore anything else under .grok/
 .grok/*

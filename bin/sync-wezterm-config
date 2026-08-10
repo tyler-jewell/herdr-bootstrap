@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Sync herdr-bootstrap config/wezterm → ~/.config/wezterm.
+
+Source of truth is the repo. Live WezTerm config is replaced for managed files
+(wezterm.lua). Optional user.lua is never overwritten.
+
+Usage:
+  bin/sync-wezterm-config [--dry-run]
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SRC_DIR = REPO / "config" / "wezterm"
+SRC_LUA = SRC_DIR / "wezterm.lua"
+DST_DIR = Path.home() / ".config" / "wezterm"
+DST_LUA = DST_DIR / "wezterm.lua"
+MANAGED = ("wezterm.lua",)
+
+
+def die(msg: str) -> None:
+    print(f"XX  {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main() -> int:
+    dry = "--dry-run" in sys.argv
+
+    if not SRC_LUA.is_file():
+        die(f"missing source of truth: {SRC_LUA}")
+
+    body = SRC_LUA.read_text(encoding="utf-8")
+    if "enable_kitty_keyboard" not in body:
+        die("source wezterm.lua missing enable_kitty_keyboard (required for Herdr/agents)")
+
+    print(f"==> source  {SRC_DIR}")
+    print(f"==> write   {DST_DIR}")
+
+    if dry:
+        print("--- preview wezterm.lua (first 40 lines) ---")
+        for i, line in enumerate(body.splitlines()[:40], 1):
+            print(f"{i:3}| {line}")
+        print("...")
+        user = DST_DIR / "user.lua"
+        if user.is_file():
+            print(f"==> keep    {user} (user overrides)")
+        return 0
+
+    DST_DIR.mkdir(parents=True, exist_ok=True)
+
+    if DST_LUA.is_file():
+        bak = DST_DIR / "wezterm.lua.pre-herdr-bootstrap"
+        if not bak.exists():
+            shutil.copy2(DST_LUA, bak)
+            print(f"==> backup  {bak}")
+        stamped = DST_DIR / "wezterm.lua.bak-last"
+        shutil.copy2(DST_LUA, stamped)
+
+    header = (
+        "-- GENERATED/MANAGED by herdr-bootstrap bin/sync-wezterm-config\n"
+        f"-- Source of truth: {SRC_LUA}\n"
+        "-- Re-run: bin/sync-wezterm-config   (or: sh install.sh)\n"
+        "-- Optional local overrides: ~/.config/wezterm/user.lua (not overwritten)\n"
+        "--\n"
+    )
+    # Strip a previous managed header if re-syncing from an already-written tree
+    content = body
+    if content.lstrip().startswith("-- GENERATED/MANAGED"):
+        lines = content.splitlines(keepends=True)
+        # drop leading managed comment block until blank line after header
+        i = 0
+        while i < len(lines) and (
+            lines[i].startswith("--") or lines[i].strip() == ""
+        ):
+            if lines[i].strip() == "" and i > 0:
+                i += 1
+                break
+            i += 1
+        content = "".join(lines[i:])
+
+    DST_LUA.write_text(header + content, encoding="utf-8")
+    print(f"==> wrote   {DST_LUA}")
+
+    user = DST_DIR / "user.lua"
+    if user.is_file():
+        print(f"==> keep    {user} (user overrides)")
+    else:
+        example = DST_DIR / "user.lua.example"
+        if not example.exists():
+            example.write_text(
+                "-- Optional WezTerm overrides (copy to user.lua).\n"
+                "-- herdr-bootstrap never overwrites user.lua.\n"
+                "--\n"
+                "-- return function(config)\n"
+                "--   config.font_size = 13\n"
+                "--   config.color_scheme = 'Catppuccin Mocha'\n"
+                "-- end\n",
+                encoding="utf-8",
+            )
+            print(f"==> wrote   {example}")
+
+    # Drop a stale ~/.wezterm.lua only if it is our managed pointer stub
+    home_lua = Path.home() / ".wezterm.lua"
+    if home_lua.is_file():
+        try:
+            text = home_lua.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if "herdr-bootstrap" in text and "prefer ~/.config/wezterm" in text:
+            print(f"==> note    {home_lua} is a bootstrap stub; XDG config takes precedence when present")
+
+    print("==> done    restart WezTerm or press CTRL+SHIFT+R to reload config")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        raise SystemExit(130)

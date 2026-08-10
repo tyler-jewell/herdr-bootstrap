@@ -131,15 +131,15 @@ Knowledge for a space lives under that repo’s **`docs/`** only (not a separate
 - ≤280 lines per page; no overlapping topics; frontmatter on wiki pages
 - Agents: skill **`docs-wiki`** / `/docs-wiki` (see AGENTS.md marker block)
 - Machine policy: [`policy/llm-wiki.toml`](../policy/llm-wiki.toml); pin in `.herdr/config.toml` `[wiki]`
-- Doctor / freshness: Go Herdr plugin [`plugins/herdr-docs-wiki`](../plugins/herdr-docs-wiki) — **not** git hooks  
+- Doctor / freshness: Go Herdr plugin [herdr-plugins/docs-wiki](https://github.com/tyler-jewell/herdr-plugins/tree/main/docs-wiki) — **not** git hooks  
   - hooks: `pane.agent_status_changed`, `workspace.focused`  
   - CLI: `herdr-docs-wiki doctor|fix|nudge`
 
 ## Related
 
 - Tool: [`bin/herdr-discover`](../bin/herdr-discover)
-- Plugin: [`plugins/herdr-docs-wiki`](../plugins/herdr-docs-wiki)
-- Skill: [`skills/docs-wiki`](../skills/docs-wiki)
+- Plugin: [tyler-jewell/herdr-plugins/docs-wiki](https://github.com/tyler-jewell/herdr-plugins/tree/main/docs-wiki)
+- Skill: [herdr-plugins/skills/docs-wiki](https://github.com/tyler-jewell/herdr-plugins/tree/main/skills/docs-wiki)
 - Templates: [`examples/herdr-config/`](../examples/herdr-config/)
 - Upstream agent guide: https://herdr.dev/agent-guide.md
 - Upstream automation: https://herdr.dev/docs/agent-automation/

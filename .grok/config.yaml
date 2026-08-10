@@ -3,8 +3,8 @@
 # v1 snapshot: mirrored from this machine's ~/.grok/config.toml immediately
 # before first sync (saved as ~/.grok/config.toml.pre-herdr-bootstrap).
 # Intentional deltas vs that snapshot:
-#   - features.lsp_tools = true  (model-visible lsp tool for Rust + Go)
-# LSP server binaries/config: .grok/lsp.json (rust-analyzer + gopls)
+#   - features.lsp_tools = true  (model-visible lsp tool for Rust + Go + Lua)
+# LSP server binaries/config: .grok/lsp.json (rust-analyzer + gopls + lua-language-server)
 #
 # Process (override entire local Grok config from this file):
 #   1. Edit THIS file in the repo and commit.
@@ -16,7 +16,7 @@
 # Grok does not load project [features] from .grok/config.toml — only ~/.grok/config.toml.
 # Hence the sync step is required for lsp_tools and other global keys.
 #
-# Agent rule: for Rust/Go source questions, use the lsp tool (and live tree) —
+# Agent rule: for Rust/Go/Lua source questions, use the lsp tool (and live tree) —
 # code on this machine is authoritative; docs can lag.
 
 cli:
@@ -37,7 +37,7 @@ ui:
   permission_mode: always-approve
 
 # Model-visible lsp tool (goToDefinition, findReferences, hover, symbols, …).
-# Passive diagnostics need only .grok/lsp.json + rust-analyzer/gopls on PATH.
-# Servers: rust (rust-analyzer), go (gopls) — see lsp.json.
+# Passive diagnostics need only .grok/lsp.json + servers on PATH.
+# Servers: rust (rust-analyzer), go (gopls), lua (lua-language-server) — see lsp.json.
 features:
   lsp_tools: true

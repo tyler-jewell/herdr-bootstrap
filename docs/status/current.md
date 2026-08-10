@@ -7,16 +7,19 @@ summary: Live view of herdr-bootstrap purpose and tooling
 
 # Current status
 
-**herdr-bootstrap** orchestrates a greenfield Herdr machine setup: Herdr, Node/npx, Grok, skills, integrations — not the Herdr app source.
+**herdr-bootstrap** orchestrates a greenfield Herdr machine setup: Herdr, **WezTerm** (outer terminal), Node/npx, Grok, skills, integrations — not the Herdr app source.
 
 ## Live tools
 
 | Tool | Role |
 |------|------|
 | `bin/herdr-discover` | Open spaces for `$HOME/**/.herdr/config.toml` |
-| `plugins/herdr-docs-wiki` | Go Herdr plugin: doctor, policy fix, agent-done freshness hooks |
-| `skills/docs-wiki` | Agent skill: search/update `docs/*` |
+| `bin/sync-wezterm-config` | Sync `config/wezterm` → `~/.config/wezterm` |
+| [herdr-plugins `docs-wiki`](https://github.com/tyler-jewell/herdr-plugins/tree/main/docs-wiki) | Go Herdr plugin: doctor, policy fix, agent-done freshness hooks |
+| [herdr-plugins code-gates](https://github.com/tyler-jewell/herdr-plugins) | `code-gate-go` / `code-gate-rust` strict gates |
+| [herdr-plugins `skills/docs-wiki`](https://github.com/tyler-jewell/herdr-plugins/tree/main/skills/docs-wiki) | Agent skill: search/update `docs/*` |
 | `policy/llm-wiki.toml` | Machine wiki policy (versioned) |
+| `config/wezterm/` | Herdr-compatible WezTerm config (Kitty keyboard/graphics) |
 
 ## Wiki home
 

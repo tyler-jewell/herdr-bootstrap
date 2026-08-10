@@ -25,7 +25,7 @@ Your machine’s Grok global settings live in `~/.grok/config.toml`. Grok does *
 
 4. Restart Grok (new session) so config reloads.
 
-## LSP servers (Rust + Go)
+## LSP servers (Rust + Go + Lua)
 
 Configured in **`lsp.json`** (project wins over user):
 
@@ -33,15 +33,17 @@ Configured in **`lsp.json`** (project wins over user):
 |------|--------|------------|
 | `rust` | `rust-analyzer` | `.rs` |
 | `go` | `gopls` | `.go`, `.mod`, `.sum`, `.work` |
+| `lua` | `lua-language-server` | `.lua` |
 
 - **Passive diagnostics:** `lsp.json` + servers on `PATH` (no flag required).
 - **Model `lsp` tool:** also needs `features.lsp_tools: true` via sync → `~/.grok/config.toml`.
-- **Agents:** prefer LSP + live tree for Rust/Go source questions; docs can be wrong or stale.
+- **Agents:** prefer LSP + live tree for Rust/Go/Lua source questions; docs can be wrong or stale.
+- **Lua workspace:** repo-root [`.luarc.json`](../.luarc.json) (WezTerm `wezterm` global, Lua 5.4).
 
 ```bash
-command -v rust-analyzer gopls
+command -v rust-analyzer gopls lua-language-server
 test -f .grok/lsp.json
 grep lsp_tools ~/.grok/config.toml
 ```
 
-`install.sh` installs missing `rust-analyzer` and `gopls` when possible.
+`install.sh` installs missing `rust-analyzer`, `gopls`, and `lua-language-server` when possible.

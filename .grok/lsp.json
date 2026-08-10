@@ -21,5 +21,15 @@
     "startupTimeout": 60000,
     "restartOnCrash": true,
     "maxRestarts": 3
+  },
+  "lua": {
+    "command": "lua-language-server",
+    "args": [],
+    "extensionToLanguage": {
+      ".lua": "lua"
+    },
+    "startupTimeout": 60000,
+    "restartOnCrash": true,
+    "maxRestarts": 3
   }
 }
