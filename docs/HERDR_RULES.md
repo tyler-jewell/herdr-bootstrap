@@ -52,6 +52,18 @@ Official model: one workspace per repo, task, or investigation; sidebar rolls up
 
 `agent start` requires an **empty shell pane** and never creates layout. Automation always builds tabs/panes first, then starts agents.
 
+## Multi-agent messaging (not a Herdr “inbox”)
+
+Upstream automation: [Agent automation](https://herdr.dev/docs/agent-automation/). Machine-wide MUST/NEVER: [`.grok/rules/herdr-multi-agent.md`](../.grok/rules/herdr-multi-agent.md).
+
+| Mechanism | What it does | Auto-wakes peer? |
+|-----------|--------------|------------------|
+| `herdr agent prompt <target> "…"` | Submits text into the agent TUI (may **queue** if already working) | Yes (when turn runs) |
+| Files (`docs/inbox/`, tickets, status.md) | Durable coordination | **No** — peer must open them |
+| `[ui.toast] delivery = "herdr"` (global config) | Human-visible done/blocked popups | No agent injection |
+
+**Failure modes we hit in practice:** flood `agent.prompt` while all peers are `working` → Grok `#1/#2` backlog of stale INBOX lines; API **Retrying (n/15)** freezes the queue; file “inbox” alone looks like delivery but never runs a turn. Fix is hygiene + wait for idle, not inventing config keys for a non-existent inbox API.
+
 ## Reconcile and layout safety
 
 `herdr-discover reconcile`:

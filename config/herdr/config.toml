@@ -15,11 +15,20 @@ name = "catppuccin"
 show_agent_labels_on_pane_borders = true
 pane_borders = true
 confirm_close = true
+# Attention queue: blocked/done float up so multi-agent tabs are scannable.
+# (Does not change prompt delivery — see .grok/rules/herdr-multi-agent.md.)
+agent_panel_sort = "priority"
 
 [ui.toast]
-# Quiet default for shared agent machines; set delivery = "herdr" for in-app toasts.
-delivery = "off"
+# In-app toasts when background agents finish or need input.
+# Was "off" — multi-agent crews looked "dead" while Grok queues/#N prompts
+# stacked and API retries ran; humans could not see idle/done without focusing panes.
+# Suppresses for the active tab. Does not inject messages into agents.
+delivery = "herdr"
 delay_seconds = 1
+
+[ui.toast.herdr]
+position = "bottom-right"
 
 [ui.sound]
 enabled = true
@@ -59,8 +68,8 @@ description = "agent-browser snapshot + show"
 [[keys.command]]
 key = "prefix+shift+w"
 type = "plugin_action"
-command = "jewell.agent-browser.watch"
-description = "agent-browser watch 2s snapshots"
+command = "jewell.agent-browser.ui"
+description = "agent-browser live stream widget"
 
 # Docs wiki doctor for current Herdr space — monorepo jewell.docs-wiki
 [[keys.command]]
